@@ -1,79 +1,39 @@
-#requires -version 2
-
-<#
-    New-AdaptThreadedFunction.ps1 - Standalone Function
-    Based on PowerView by Will Schroeder (@harmj0y)
-    Original function: New-AdaptThreadedFunction
-    
-    Clean version - no PSReflect/Win32 signatures
-#>
-
-# --- Main Function: New-AdaptThreadedFunction ---
 function New-AdaptThreadedFunction {
-    # Helper used by any threaded host enumeration functions
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '')]
     [CmdletBinding()]
     Param(
         [Parameter(Position = 0, Mandatory = $True, ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
         [String[]]
         $ComputerName,
-
         [Parameter(Position = 1, Mandatory = $True)]
         [System.Management.Automation.ScriptBlock]
         $ScriptBlock,
-
         [Parameter(Position = 2)]
         [Hashtable]
         $ScriptParameters,
-
         [Int]
         [ValidateRange(1,  100)]
         $Threads = 20,
-
         [Switch]
         $NoImports
     )
-
     BEGIN {
-        # Adapted from:
-        #   http://powershell.org/wp/forums/topic/invpke-parallel-need-help-to-clone-the-current-runspace/
         $SessionState = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
-
-        # # $SessionState.ApartmentState = [System.Threading.Thread]::CurrentThread.GetApartmentState()
-        # force a single-threaded apartment state (for token-impersonation stuffz)
         $SessionState.ApartmentState = [System.Threading.ApartmentState]::STA
-
-        # import the current session state's variables and functions so the chained PowerView
-        #   functionality can be used by the threaded blocks
         if (-not $NoImports) {
-            # grab all the current variables for this runspace
             $MyVars = Get-Variable -Scope 2
-
-            # these Variables are added by Runspace.Open() Method and produce Stop errors if you add them twice
             $VorbiddenVars = @('?','args','ConsoleFileName','Error','ExecutionContext','false','HOME','Host','input','InputObject','MaximumAliasCount','MaximumDriveCount','MaximumErrorCount','MaximumFunctionCount','MaximumHistoryCount','MaximumVariableCount','MyInvocation','null','PID','PSBoundParameters','PSCommandPath','PSCulture','PSDefaultParameterValues','PSHOME','PSScriptRoot','PSUICulture','PSVersionTable','PWD','ShellId','SynchronizedHash','true')
-
-            # add Variables from Parent Scope (current runspace) into the InitialSessionState
             ForEach ($Var in $MyVars) {
                 if ($VorbiddenVars -NotContains $Var.Name) {
                 $SessionState.Variables.Add((New-Object -TypeName System.Management.Automation.Runspaces.SessionStateVariableEntry -ArgumentList $Var.name,$Var.Value,$Var.description,$Var.options,$Var.attributes))
                 }
             }
-
-            # add Functions from current runspace to the InitialSessionState
             ForEach ($Function in (Get-ChildItem Function:)) {
                 $SessionState.Commands.Add((New-Object -TypeName System.Management.Automation.Runspaces.SessionStateFunctionEntry -ArgumentList $Function.Name, $Function.Definition))
             }
         }
-
-        # threading adapted from
-        # https://github.com/darkoperator/Posh-SecMod/blob/master/Discovery/Discovery.psm1#L407
-        #   Thanks Carlos!
-
-        # create a pool of maxThread runspaces
         $Pool = [RunspaceFactory]::CreateRunspacePool(1, $Threads, $SessionState, $Host)
         $Pool.Open()
-
-        # do some trickery to get the proper BeginInvoke() method that allows for an output queue
         $Method = $Null
         ForEach ($M in [PowerShell].GetMethods() | Where-Object { $_.Name -eq 'BeginInvoke' }) {
             $MethodParameters = $M.GetParameters()
@@ -82,12 +42,9 @@ function New-AdaptThreadedFunction {
                 break
             }
         }
-
         $Jobs = @()
         $ComputerName = $ComputerName | Where-Object {$_ -and $_.Trim()}
         Write-Verbose "[New-AdaptThreadedFunction] Total number of hosts: $($ComputerName.count)"
-
-        # partition all hosts from -ComputerName into $Threads number of groups
         if ($Threads -ge $ComputerName.Length) {
             $Threads = $ComputerName.Length
         }
@@ -95,7 +52,6 @@ function New-AdaptThreadedFunction {
         $ComputerNamePartitioned = @()
         $Start = 0
         $End = $ElementSplitSize
-
         for($i = 1; $i -le $Threads; $i++) {
             $List = New-Object System.Collections.ArrayList
             if ($i -eq $Threads) {
@@ -106,26 +62,17 @@ function New-AdaptThreadedFunction {
             $End += $ElementSplitSize
             $ComputerNamePartitioned += @(,@($List.ToArray()))
         }
-
         Write-Verbose "[New-AdaptThreadedFunction] Total number of threads/partitions: $Threads"
-
         ForEach ($ComputerNamePartition in $ComputerNamePartitioned) {
-            # create a "powershell pipeline runner"
             $PowerShell = [PowerShell]::Create()
             $PowerShell.runspacepool = $Pool
-
-            # add the script block + arguments with the given computer partition
             $Null = $PowerShell.AddScript($ScriptBlock).AddParameter('ComputerName', $ComputerNamePartition)
             if ($ScriptParameters) {
                 ForEach ($Param in $ScriptParameters.GetEnumerator()) {
                     $Null = $PowerShell.AddParameter($Param.Name, $Param.Value)
                 }
             }
-
-            # create the output queue
             $Output = New-Object Management.Automation.PSDataCollection[Object]
-
-            # kick off execution using the BeginInvok() method that allows queues
             $Jobs += @{
                 PS = $PowerShell
                 Output = $Output
@@ -133,11 +80,8 @@ function New-AdaptThreadedFunction {
             }
         }
     }
-
     END {
         Write-Verbose "[New-AdaptThreadedFunction] Threads executing"
-
-        # continuously loop through each job queue, consuming output as appropriate
         Do {
             ForEach ($Job in $Jobs) {
                 $Job.Output.ReadAll()
@@ -145,11 +89,8 @@ function New-AdaptThreadedFunction {
             Start-Sleep -Seconds 1
         }
         While (($Jobs | Where-Object { -not $_.Result.IsCompleted }).Count -gt 0)
-
         $SleepSeconds = 100
         Write-Verbose "[New-AdaptThreadedFunction] Waiting $SleepSeconds seconds for final cleanup..."
-
-        # cleanup- make sure we didn't miss anything
         for ($i=0; $i -lt $SleepSeconds; $i++) {
             ForEach ($Job in $Jobs) {
                 $Job.Output.ReadAll()
@@ -157,7 +98,6 @@ function New-AdaptThreadedFunction {
             }
             Start-Sleep -S 1
         }
-
         $Pool.Dispose()
         Write-Verbose "[New-AdaptThreadedFunction] all threads completed"
     }
