@@ -1,9 +1,9 @@
 #requires -version 2
 
 <#
-    Find-AdaptInterestingFile.ps1 - Standalone Function
+    Add-AdaptRemoteConnection.ps1 - Standalone Function
     Based on PowerView by Will Schroeder (@harmj0y)
-    Original function: Find-AdaptInterestingFile
+    Original function: Add-AdaptRemoteConnection
     
     Requires Win32 APIs - may trigger EDR
 #>
@@ -933,7 +933,86 @@ $Wtsapi32 = $Types['wtsapi32']
 $Mpr = $Types['Mpr']
 $Kernel32 = $Types['kernel32']
 
-# --- Add-AdaptRemoteConnection (dependency) ---
+# --- Remove-AdaptRemoteConnection (dependency) ---
+function Remove-AdaptRemoteConnection {
+<#
+.SYNOPSIS
+
+Destroys a connection created by New-RemoteConnection.
+
+Author: Will Schroeder (@harmj0y)  
+License: BSD 3-Clause  
+Required Dependencies: PSReflect  
+
+.DESCRIPTION
+
+This function uses WNetCancelConnection2 to destroy a connection created by
+New-RemoteConnection. If a -Path isn't specified, a -ComputerName is required to
+'unmount' \\$ComputerName\IPC$.
+
+.PARAMETER ComputerName
+
+Specifies the system to remove a \\ComputerName\IPC$ connection for.
+
+.PARAMETER Path
+
+Specifies the remote \\UNC\path to remove the connection for.
+
+.EXAMPLE
+
+Remove-AdaptRemoteConnection -ComputerName 'PRIMARY.testlab.local'
+
+.EXAMPLE
+
+Remove-AdaptRemoteConnection -Path '\\PRIMARY.testlab.local\C$\'
+
+.EXAMPLE
+
+@('PRIMARY.testlab.local','SECONDARY.testlab.local') | Remove-AdaptRemoteConnection
+#>
+
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '')]
+    [CmdletBinding(DefaultParameterSetName = 'ComputerName')]
+    Param(
+        [Parameter(Position = 0, Mandatory = $True, ParameterSetName = 'ComputerName', ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
+        [Alias('HostName', 'dnshostname', 'name')]
+        [ValidateNotNullOrEmpty()]
+        [String[]]
+        $ComputerName,
+
+        [Parameter(Position = 0, ParameterSetName = 'Path', Mandatory = $True)]
+        [ValidatePattern('\\\\.*\\.*')]
+        [String[]]
+        $Path
+    )
+
+    PROCESS {
+        $Paths = @()
+        if ($PSBoundParameters['ComputerName']) {
+            ForEach ($TargetComputerName in $ComputerName) {
+                $TargetComputerName = $TargetComputerName.Trim('\')
+                $Paths += ,"\\$TargetComputerName\IPC$"
+            }
+        }
+        else {
+            $Paths += ,$Path
+        }
+
+        ForEach ($TargetPath in $Paths) {
+            Write-Verbose "[Remove-AdaptRemoteConnection] Attempting to unmount: $TargetPath"
+            $Result = $Mpr::WNetCancelConnection2($TargetPath, 0, $True)
+
+            if ($Result -eq 0) {
+                Write-Verbose "$TargetPath successfully ummounted"
+            }
+            else {
+                Throw "[Remove-AdaptRemoteConnection] error unmounting $TargetPath : $(([ComponentModel.Win32Exception]$Result).Message)"
+            }
+        }
+    }
+}
+
+# --- Main Function: Add-AdaptRemoteConnection ---
 function Add-AdaptRemoteConnection {
 <#
 .SYNOPSIS
@@ -1036,314 +1115,5 @@ $Cred = Get-Credential
                 Throw "[Add-AdaptRemoteConnection] error mounting $TargetPath : $(([ComponentModel.Win32Exception]$Result).Message)"
             }
         }
-    }
-}
-
-# --- Remove-AdaptRemoteConnection (dependency) ---
-function Remove-AdaptRemoteConnection {
-<#
-.SYNOPSIS
-
-Destroys a connection created by New-RemoteConnection.
-
-Author: Will Schroeder (@harmj0y)  
-License: BSD 3-Clause  
-Required Dependencies: PSReflect  
-
-.DESCRIPTION
-
-This function uses WNetCancelConnection2 to destroy a connection created by
-New-RemoteConnection. If a -Path isn't specified, a -ComputerName is required to
-'unmount' \\$ComputerName\IPC$.
-
-.PARAMETER ComputerName
-
-Specifies the system to remove a \\ComputerName\IPC$ connection for.
-
-.PARAMETER Path
-
-Specifies the remote \\UNC\path to remove the connection for.
-
-.EXAMPLE
-
-Remove-AdaptRemoteConnection -ComputerName 'PRIMARY.testlab.local'
-
-.EXAMPLE
-
-Remove-AdaptRemoteConnection -Path '\\PRIMARY.testlab.local\C$\'
-
-.EXAMPLE
-
-@('PRIMARY.testlab.local','SECONDARY.testlab.local') | Remove-AdaptRemoteConnection
-#>
-
-    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '')]
-    [CmdletBinding(DefaultParameterSetName = 'ComputerName')]
-    Param(
-        [Parameter(Position = 0, Mandatory = $True, ParameterSetName = 'ComputerName', ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
-        [Alias('HostName', 'dnshostname', 'name')]
-        [ValidateNotNullOrEmpty()]
-        [String[]]
-        $ComputerName,
-
-        [Parameter(Position = 0, ParameterSetName = 'Path', Mandatory = $True)]
-        [ValidatePattern('\\\\.*\\.*')]
-        [String[]]
-        $Path
-    )
-
-    PROCESS {
-        $Paths = @()
-        if ($PSBoundParameters['ComputerName']) {
-            ForEach ($TargetComputerName in $ComputerName) {
-                $TargetComputerName = $TargetComputerName.Trim('\')
-                $Paths += ,"\\$TargetComputerName\IPC$"
-            }
-        }
-        else {
-            $Paths += ,$Path
-        }
-
-        ForEach ($TargetPath in $Paths) {
-            Write-Verbose "[Remove-AdaptRemoteConnection] Attempting to unmount: $TargetPath"
-            $Result = $Mpr::WNetCancelConnection2($TargetPath, 0, $True)
-
-            if ($Result -eq 0) {
-                Write-Verbose "$TargetPath successfully ummounted"
-            }
-            else {
-                Throw "[Remove-AdaptRemoteConnection] error unmounting $TargetPath : $(([ComponentModel.Win32Exception]$Result).Message)"
-            }
-        }
-    }
-}
-
-# --- Main Function: Find-AdaptInterestingFile ---
-function Find-AdaptInterestingFile {
-<#
-.SYNOPSIS
-
-Searches for files on the given path that match a series of specified criteria.
-
-Author: Will Schroeder (@harmj0y)  
-License: BSD 3-Clause  
-Required Dependencies: Add-AdaptRemoteConnection, Remove-AdaptRemoteConnection  
-
-.DESCRIPTION
-
-This function recursively searches a given UNC path for files with
-specific keywords in the name (default of pass, sensitive, secret, admin,
-login and unattend*.xml). By default, hidden files/folders are included
-in search results. If -Credential is passed, Add-AdaptRemoteConnection/Remove-AdaptRemoteConnection
-is used to temporarily map the remote share.
-
-.PARAMETER Path
-
-UNC/local path to recursively search.
-
-.PARAMETER Include
-
-Only return files/folders that match the specified array of strings,
-i.e. @(*.doc*, *.xls*, *.ppt*)
-
-.PARAMETER LastAccessTime
-
-Only return files with a LastAccessTime greater than this date value.
-
-.PARAMETER LastWriteTime
-
-Only return files with a LastWriteTime greater than this date value.
-
-.PARAMETER CreationTime
-
-Only return files with a CreationTime greater than this date value.
-
-.PARAMETER OfficeDocs
-
-Switch. Search for office documents (*.doc*, *.xls*, *.ppt*)
-
-.PARAMETER FreshEXEs
-
-Switch. Find .EXEs accessed within the last 7 days.
-
-.PARAMETER ExcludeFolders
-
-Switch. Exclude folders from the search results.
-
-.PARAMETER ExcludeHidden
-
-Switch. Exclude hidden files and folders from the search results.
-
-.PARAMETER CheckWriteAccess
-
-Switch. Only returns files the current user has write access to.
-
-.PARAMETER Credential
-
-A [Management.Automation.PSCredential] object of alternate credentials
-to connect to remote systems for file enumeration.
-
-.EXAMPLE
-
-Find-AdaptInterestingFile -Path "C:\Backup\"
-
-Returns any files on the local path C:\Backup\ that have the default
-search term set in the title.
-
-.EXAMPLE
-
-Find-AdaptInterestingFile -Path "\\WINDOWS7\Users\" -LastAccessTime (Get-Date).AddDays(-7)
-
-Returns any files on the remote path \\WINDOWS7\Users\ that have the default
-search term set in the title and were accessed within the last week.
-
-.EXAMPLE
-
-$SecPassword = ConvertTo-SecureString 'Password123!' -AsPlainText -Force
-$Cred = New-Object System.Management.Automation.PSCredential('TESTLAB\dfm.a', $SecPassword)
-Find-AdaptInterestingFile -Credential $Cred -Path "\\PRIMARY.testlab.local\C$\Temp\"
-
-.OUTPUTS
-
-PowerView.FoundFile
-#>
-
-    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSShouldProcess', '')]
-    [OutputType('PowerView.FoundFile')]
-    [CmdletBinding(DefaultParameterSetName = 'FileSpecification')]
-    Param(
-        [Parameter(Position = 0, ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
-        [ValidateNotNullOrEmpty()]
-        [String[]]
-        $Path = '.\',
-
-        [Parameter(ParameterSetName = 'FileSpecification')]
-        [ValidateNotNullOrEmpty()]
-        [Alias('SearchTerms', 'Terms')]
-        [String[]]
-        $Include = @('*password*', '*sensitive*', '*admin*', '*login*', '*secret*', 'unattend*.xml', '*.vmdk', '*creds*', '*credential*', '*.config'),
-
-        [Parameter(ParameterSetName = 'FileSpecification')]
-        [ValidateNotNullOrEmpty()]
-        [DateTime]
-        $LastAccessTime,
-
-        [Parameter(ParameterSetName = 'FileSpecification')]
-        [ValidateNotNullOrEmpty()]
-        [DateTime]
-        $LastWriteTime,
-
-        [Parameter(ParameterSetName = 'FileSpecification')]
-        [ValidateNotNullOrEmpty()]
-        [DateTime]
-        $CreationTime,
-
-        [Parameter(ParameterSetName = 'OfficeDocs')]
-        [Switch]
-        $OfficeDocs,
-
-        [Parameter(ParameterSetName = 'FreshEXEs')]
-        [Switch]
-        $FreshEXEs,
-
-        [Parameter(ParameterSetName = 'FileSpecification')]
-        [Switch]
-        $ExcludeFolders,
-
-        [Parameter(ParameterSetName = 'FileSpecification')]
-        [Switch]
-        $ExcludeHidden,
-
-        [Switch]
-        $CheckWriteAccess,
-
-        [Management.Automation.PSCredential]
-        [Management.Automation.CredentialAttribute()]
-        $Credential = [Management.Automation.PSCredential]::Empty
-    )
-
-    BEGIN {
-        $SearcherArguments =  @{
-            'Recurse' = $True
-            'ErrorAction' = 'SilentlyContinue'
-            'Include' = $Include
-        }
-        if ($PSBoundParameters['OfficeDocs']) {
-            $SearcherArguments['Include'] = @('*.doc', '*.docx', '*.xls', '*.xlsx', '*.ppt', '*.pptx')
-        }
-        elseif ($PSBoundParameters['FreshEXEs']) {
-            # find .exe's accessed within the last 7 days
-            $LastAccessTime = (Get-Date).AddDays(-7).ToString('MM/dd/yyyy')
-            $SearcherArguments['Include'] = @('*.exe')
-        }
-        $SearcherArguments['Force'] = -not $PSBoundParameters['ExcludeHidden']
-
-        $MappedComputers = @{}
-
-        function Test-Write {
-            # short helper to check is the current user can write to a file
-            [CmdletBinding()]Param([String]$Path)
-            try {
-                $Filetest = [IO.File]::OpenWrite($Path)
-                $Filetest.Close()
-                $True
-            }
-            catch {
-                $False
-            }
-        }
-    }
-
-    PROCESS {
-        ForEach ($TargetPath in $Path) {
-            if (($TargetPath -Match '\\\\.*\\.*') -and ($PSBoundParameters['Credential'])) {
-                $HostComputer = (New-Object System.Uri($TargetPath)).Host
-                if (-not $MappedComputers[$HostComputer]) {
-                    # map IPC$ to this computer if it's not already
-                    Add-AdaptRemoteConnection -ComputerName $HostComputer -Credential $Credential
-                    $MappedComputers[$HostComputer] = $True
-                }
-            }
-
-            $SearcherArguments['Path'] = $TargetPath
-            Get-ChildItem @SearcherArguments | ForEach-Object {
-                # check if we're excluding folders
-                $Continue = $True
-                if ($PSBoundParameters['ExcludeFolders'] -and ($_.PSIsContainer)) {
-                    Write-Verbose "Excluding: $($_.FullName)"
-                    $Continue = $False
-                }
-                if ($LastAccessTime -and ($_.LastAccessTime -lt $LastAccessTime)) {
-                    $Continue = $False
-                }
-                if ($PSBoundParameters['LastWriteTime'] -and ($_.LastWriteTime -lt $LastWriteTime)) {
-                    $Continue = $False
-                }
-                if ($PSBoundParameters['CreationTime'] -and ($_.CreationTime -lt $CreationTime)) {
-                    $Continue = $False
-                }
-                if ($PSBoundParameters['CheckWriteAccess'] -and (-not (Test-Write -Path $_.FullName))) {
-                    $Continue = $False
-                }
-                if ($Continue) {
-                    $FileParams = @{
-                        'Path' = $_.FullName
-                        'Owner' = $((Get-Acl $_.FullName).Owner)
-                        'LastAccessTime' = $_.LastAccessTime
-                        'LastWriteTime' = $_.LastWriteTime
-                        'CreationTime' = $_.CreationTime
-                        'Length' = $_.Length
-                    }
-                    $FoundFile = New-Object -TypeName PSObject -Property $FileParams
-                    $FoundFile.PSObject.TypeNames.Insert(0, 'PowerView.FoundFile')
-                    $FoundFile
-                }
-            }
-        }
-    }
-
-    END {
-        # remove the IPC$ mappings
-        $MappedComputers.Keys | Remove-AdaptRemoteConnection
     }
 }

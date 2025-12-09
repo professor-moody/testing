@@ -1,9 +1,9 @@
 #requires -version 2
 
 <#
-    Find-AdaptInterestingFile.ps1 - Standalone Function
+    Invoke-AdaptUserImpersonation.ps1 - Standalone Function
     Based on PowerView by Will Schroeder (@harmj0y)
-    Original function: Find-AdaptInterestingFile
+    Original function: Invoke-AdaptUserImpersonation
     
     Requires Win32 APIs - may trigger EDR
 #>
@@ -933,14 +933,12 @@ $Wtsapi32 = $Types['wtsapi32']
 $Mpr = $Types['Mpr']
 $Kernel32 = $Types['kernel32']
 
-# --- Add-AdaptRemoteConnection (dependency) ---
-function Add-AdaptRemoteConnection {
+# --- Invoke-AdaptRevertToSelf (dependency) ---
+function Invoke-AdaptRevertToSelf {
 <#
 .SYNOPSIS
 
-Pseudo "mounts" a connection to a remote path using the specified
-credential object, allowing for access of remote resources. If a -Path isn't
-specified, a -ComputerName is required to pseudo-mount IPC$.
+Reverts any token impersonation.
 
 Author: Will Schroeder (@harmj0y)  
 License: BSD 3-Clause  
@@ -948,103 +946,49 @@ Required Dependencies: PSReflect
 
 .DESCRIPTION
 
-This function uses WNetAddConnection2W to make a 'temporary' (i.e. not saved) connection
-to the specified remote -Path (\\UNC\share) with the alternate credentials specified in the
--Credential object. If a -Path isn't specified, a -ComputerName is required to pseudo-mount IPC$.
+This function uses RevertToSelf() to revert any impersonated tokens.
+If -TokenHandle is passed (the token handle returned by Invoke-AdaptUserImpersonation),
+CloseHandle() is used to close the opened handle.
 
-To destroy the connection, use Remove-AdaptRemoteConnection with the same specified \\UNC\share path
-or -ComputerName.
+.PARAMETER TokenHandle
 
-.PARAMETER ComputerName
-
-Specifies the system to add a \\ComputerName\IPC$ connection for.
-
-.PARAMETER Path
-
-Specifies the remote \\UNC\path to add the connection for.
-
-.PARAMETER Credential
-
-A [Management.Automation.PSCredential] object of alternate credentials
-for connection to the remote system.
-
-.EXAMPLE
-
-$Cred = Get-Credential
-Add-AdaptRemoteConnection -ComputerName 'PRIMARY.testlab.local' -Credential $Cred
+An optional IntPtr TokenHandle returned by Invoke-AdaptUserImpersonation.
 
 .EXAMPLE
 
 $SecPassword = ConvertTo-SecureString 'Password123!' -AsPlainText -Force
 $Cred = New-Object System.Management.Automation.PSCredential('TESTLAB\dfm.a', $SecPassword)
-Add-AdaptRemoteConnection -Path '\\PRIMARY.testlab.local\C$\' -Credential $Cred
-
-.EXAMPLE
-
-$Cred = Get-Credential
-@('PRIMARY.testlab.local','SECONDARY.testlab.local') | Add-AdaptRemoteConnection  -Credential $Cred
+$Token = Invoke-AdaptUserImpersonation -Credential $Cred
+Invoke-AdaptRevertToSelf -TokenHandle $Token
 #>
 
-    [CmdletBinding(DefaultParameterSetName = 'ComputerName')]
+    [CmdletBinding()]
     Param(
-        [Parameter(Position = 0, Mandatory = $True, ParameterSetName = 'ComputerName', ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
-        [Alias('HostName', 'dnshostname', 'name')]
-        [ValidateNotNullOrEmpty()]
-        [String[]]
-        $ComputerName,
-
-        [Parameter(Position = 0, ParameterSetName = 'Path', Mandatory = $True)]
-        [ValidatePattern('\\\\.*\\.*')]
-        [String[]]
-        $Path,
-
-        [Parameter(Mandatory = $True)]
-        [Management.Automation.PSCredential]
-        [Management.Automation.CredentialAttribute()]
-        $Credential
+        [ValidateNotNull()]
+        [IntPtr]
+        $TokenHandle
     )
 
-    BEGIN {
-        $NetResourceInstance = [Activator]::CreateInstance($NETRESOURCEW)
-        $NetResourceInstance.dwType = 1
+    if ($PSBoundParameters['TokenHandle']) {
+        Write-Warning "[Invoke-AdaptRevertToSelf] Reverting token impersonation and closing LogonUser() token handle"
+        $Result = $Kernel32::CloseHandle($TokenHandle)
     }
 
-    PROCESS {
-        $Paths = @()
-        if ($PSBoundParameters['ComputerName']) {
-            ForEach ($TargetComputerName in $ComputerName) {
-                $TargetComputerName = $TargetComputerName.Trim('\')
-                $Paths += ,"\\$TargetComputerName\IPC$"
-            }
-        }
-        else {
-            $Paths += ,$Path
-        }
+    $Result = $Advapi32::RevertToSelf();$LastError = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error();
 
-        ForEach ($TargetPath in $Paths) {
-            $NetResourceInstance.lpRemoteName = $TargetPath
-            Write-Verbose "[Add-AdaptRemoteConnection] Attempting to mount: $TargetPath"
-
-            # https://msdn.microsoft.com/en-us/library/windows/desktop/aa385413(v=vs.85).aspx
-            #   CONNECT_TEMPORARY = 4
-            $Result = $Mpr::WNetAddConnection2W($NetResourceInstance, $Credential.GetNetworkCredential().Password, $Credential.UserName, 4)
-
-            if ($Result -eq 0) {
-                Write-Verbose "$TargetPath successfully mounted"
-            }
-            else {
-                Throw "[Add-AdaptRemoteConnection] error mounting $TargetPath : $(([ComponentModel.Win32Exception]$Result).Message)"
-            }
-        }
+    if (-not $Result) {
+        throw "[Invoke-AdaptRevertToSelf] RevertToSelf() Error: $(([ComponentModel.Win32Exception] $LastError).Message)"
     }
+
+    Write-Verbose "[Invoke-AdaptRevertToSelf] Token impersonation successfully reverted"
 }
 
-# --- Remove-AdaptRemoteConnection (dependency) ---
-function Remove-AdaptRemoteConnection {
+# --- Invoke-AdaptUserImpersonation (dependency) ---
+function Invoke-AdaptUserImpersonation {
 <#
 .SYNOPSIS
 
-Destroys a connection created by New-RemoteConnection.
+Creates a new "runas /netonly" type logon and impersonates the token.
 
 Author: Will Schroeder (@harmj0y)  
 License: BSD 3-Clause  
@@ -1052,298 +996,183 @@ Required Dependencies: PSReflect
 
 .DESCRIPTION
 
-This function uses WNetCancelConnection2 to destroy a connection created by
-New-RemoteConnection. If a -Path isn't specified, a -ComputerName is required to
-'unmount' \\$ComputerName\IPC$.
-
-.PARAMETER ComputerName
-
-Specifies the system to remove a \\ComputerName\IPC$ connection for.
-
-.PARAMETER Path
-
-Specifies the remote \\UNC\path to remove the connection for.
-
-.EXAMPLE
-
-Remove-AdaptRemoteConnection -ComputerName 'PRIMARY.testlab.local'
-
-.EXAMPLE
-
-Remove-AdaptRemoteConnection -Path '\\PRIMARY.testlab.local\C$\'
-
-.EXAMPLE
-
-@('PRIMARY.testlab.local','SECONDARY.testlab.local') | Remove-AdaptRemoteConnection
-#>
-
-    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '')]
-    [CmdletBinding(DefaultParameterSetName = 'ComputerName')]
-    Param(
-        [Parameter(Position = 0, Mandatory = $True, ParameterSetName = 'ComputerName', ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
-        [Alias('HostName', 'dnshostname', 'name')]
-        [ValidateNotNullOrEmpty()]
-        [String[]]
-        $ComputerName,
-
-        [Parameter(Position = 0, ParameterSetName = 'Path', Mandatory = $True)]
-        [ValidatePattern('\\\\.*\\.*')]
-        [String[]]
-        $Path
-    )
-
-    PROCESS {
-        $Paths = @()
-        if ($PSBoundParameters['ComputerName']) {
-            ForEach ($TargetComputerName in $ComputerName) {
-                $TargetComputerName = $TargetComputerName.Trim('\')
-                $Paths += ,"\\$TargetComputerName\IPC$"
-            }
-        }
-        else {
-            $Paths += ,$Path
-        }
-
-        ForEach ($TargetPath in $Paths) {
-            Write-Verbose "[Remove-AdaptRemoteConnection] Attempting to unmount: $TargetPath"
-            $Result = $Mpr::WNetCancelConnection2($TargetPath, 0, $True)
-
-            if ($Result -eq 0) {
-                Write-Verbose "$TargetPath successfully ummounted"
-            }
-            else {
-                Throw "[Remove-AdaptRemoteConnection] error unmounting $TargetPath : $(([ComponentModel.Win32Exception]$Result).Message)"
-            }
-        }
-    }
-}
-
-# --- Main Function: Find-AdaptInterestingFile ---
-function Find-AdaptInterestingFile {
-<#
-.SYNOPSIS
-
-Searches for files on the given path that match a series of specified criteria.
-
-Author: Will Schroeder (@harmj0y)  
-License: BSD 3-Clause  
-Required Dependencies: Add-AdaptRemoteConnection, Remove-AdaptRemoteConnection  
-
-.DESCRIPTION
-
-This function recursively searches a given UNC path for files with
-specific keywords in the name (default of pass, sensitive, secret, admin,
-login and unattend*.xml). By default, hidden files/folders are included
-in search results. If -Credential is passed, Add-AdaptRemoteConnection/Remove-AdaptRemoteConnection
-is used to temporarily map the remote share.
-
-.PARAMETER Path
-
-UNC/local path to recursively search.
-
-.PARAMETER Include
-
-Only return files/folders that match the specified array of strings,
-i.e. @(*.doc*, *.xls*, *.ppt*)
-
-.PARAMETER LastAccessTime
-
-Only return files with a LastAccessTime greater than this date value.
-
-.PARAMETER LastWriteTime
-
-Only return files with a LastWriteTime greater than this date value.
-
-.PARAMETER CreationTime
-
-Only return files with a CreationTime greater than this date value.
-
-.PARAMETER OfficeDocs
-
-Switch. Search for office documents (*.doc*, *.xls*, *.ppt*)
-
-.PARAMETER FreshEXEs
-
-Switch. Find .EXEs accessed within the last 7 days.
-
-.PARAMETER ExcludeFolders
-
-Switch. Exclude folders from the search results.
-
-.PARAMETER ExcludeHidden
-
-Switch. Exclude hidden files and folders from the search results.
-
-.PARAMETER CheckWriteAccess
-
-Switch. Only returns files the current user has write access to.
+This function uses LogonUser() with the LOGON32_LOGON_NEW_CREDENTIALS LogonType
+to simulate "runas /netonly". The resulting token is then impersonated with
+ImpersonateLoggedOnUser() and the token handle is returned for later usage
+with Invoke-AdaptRevertToSelf.
 
 .PARAMETER Credential
 
-A [Management.Automation.PSCredential] object of alternate credentials
-to connect to remote systems for file enumeration.
+A [Management.Automation.PSCredential] object with alternate credentials
+to impersonate in the current thread space.
 
-.EXAMPLE
+.PARAMETER TokenHandle
 
-Find-AdaptInterestingFile -Path "C:\Backup\"
+An IntPtr TokenHandle returned by a previous Invoke-AdaptUserImpersonation.
+If this is supplied, LogonUser() is skipped and only ImpersonateLoggedOnUser()
+is executed.
 
-Returns any files on the local path C:\Backup\ that have the default
-search term set in the title.
+.PARAMETER Quiet
 
-.EXAMPLE
-
-Find-AdaptInterestingFile -Path "\\WINDOWS7\Users\" -LastAccessTime (Get-Date).AddDays(-7)
-
-Returns any files on the remote path \\WINDOWS7\Users\ that have the default
-search term set in the title and were accessed within the last week.
+Suppress any warnings about STA vs MTA.
 
 .EXAMPLE
 
 $SecPassword = ConvertTo-SecureString 'Password123!' -AsPlainText -Force
 $Cred = New-Object System.Management.Automation.PSCredential('TESTLAB\dfm.a', $SecPassword)
-Find-AdaptInterestingFile -Credential $Cred -Path "\\PRIMARY.testlab.local\C$\Temp\"
+Invoke-AdaptUserImpersonation -Credential $Cred
 
 .OUTPUTS
 
-PowerView.FoundFile
+IntPtr
+
+The TokenHandle result from LogonUser.
 #>
 
-    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSShouldProcess', '')]
-    [OutputType('PowerView.FoundFile')]
-    [CmdletBinding(DefaultParameterSetName = 'FileSpecification')]
+    [OutputType([IntPtr])]
+    [CmdletBinding(DefaultParameterSetName = 'Credential')]
     Param(
-        [Parameter(Position = 0, ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
-        [ValidateNotNullOrEmpty()]
-        [String[]]
-        $Path = '.\',
-
-        [Parameter(ParameterSetName = 'FileSpecification')]
-        [ValidateNotNullOrEmpty()]
-        [Alias('SearchTerms', 'Terms')]
-        [String[]]
-        $Include = @('*password*', '*sensitive*', '*admin*', '*login*', '*secret*', 'unattend*.xml', '*.vmdk', '*creds*', '*credential*', '*.config'),
-
-        [Parameter(ParameterSetName = 'FileSpecification')]
-        [ValidateNotNullOrEmpty()]
-        [DateTime]
-        $LastAccessTime,
-
-        [Parameter(ParameterSetName = 'FileSpecification')]
-        [ValidateNotNullOrEmpty()]
-        [DateTime]
-        $LastWriteTime,
-
-        [Parameter(ParameterSetName = 'FileSpecification')]
-        [ValidateNotNullOrEmpty()]
-        [DateTime]
-        $CreationTime,
-
-        [Parameter(ParameterSetName = 'OfficeDocs')]
-        [Switch]
-        $OfficeDocs,
-
-        [Parameter(ParameterSetName = 'FreshEXEs')]
-        [Switch]
-        $FreshEXEs,
-
-        [Parameter(ParameterSetName = 'FileSpecification')]
-        [Switch]
-        $ExcludeFolders,
-
-        [Parameter(ParameterSetName = 'FileSpecification')]
-        [Switch]
-        $ExcludeHidden,
-
-        [Switch]
-        $CheckWriteAccess,
-
+        [Parameter(Mandatory = $True, ParameterSetName = 'Credential')]
         [Management.Automation.PSCredential]
         [Management.Automation.CredentialAttribute()]
-        $Credential = [Management.Automation.PSCredential]::Empty
+        $Credential,
+
+        [Parameter(Mandatory = $True, ParameterSetName = 'TokenHandle')]
+        [ValidateNotNull()]
+        [IntPtr]
+        $TokenHandle,
+
+        [Switch]
+        $Quiet
     )
 
-    BEGIN {
-        $SearcherArguments =  @{
-            'Recurse' = $True
-            'ErrorAction' = 'SilentlyContinue'
-            'Include' = $Include
-        }
-        if ($PSBoundParameters['OfficeDocs']) {
-            $SearcherArguments['Include'] = @('*.doc', '*.docx', '*.xls', '*.xlsx', '*.ppt', '*.pptx')
-        }
-        elseif ($PSBoundParameters['FreshEXEs']) {
-            # find .exe's accessed within the last 7 days
-            $LastAccessTime = (Get-Date).AddDays(-7).ToString('MM/dd/yyyy')
-            $SearcherArguments['Include'] = @('*.exe')
-        }
-        $SearcherArguments['Force'] = -not $PSBoundParameters['ExcludeHidden']
+    if (([System.Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') -and (-not $PSBoundParameters['Quiet'])) {
+        Write-Warning "[Invoke-AdaptUserImpersonation] powershell.exe is not currently in a single-threaded apartment state, token impersonation may not work."
+    }
 
-        $MappedComputers = @{}
+    if ($PSBoundParameters['TokenHandle']) {
+        $LogonTokenHandle = $TokenHandle
+    }
+    else {
+        $LogonTokenHandle = [IntPtr]::Zero
+        $NetworkCredential = $Credential.GetNetworkCredential()
+        $UserDomain = $NetworkCredential.Domain
+        $UserName = $NetworkCredential.UserName
+        Write-Warning "[Invoke-AdaptUserImpersonation] Executing LogonUser() with user: $($UserDomain)\$($UserName)"
 
-        function Test-Write {
-            # short helper to check is the current user can write to a file
-            [CmdletBinding()]Param([String]$Path)
-            try {
-                $Filetest = [IO.File]::OpenWrite($Path)
-                $Filetest.Close()
-                $True
-            }
-            catch {
-                $False
-            }
+        # LOGON32_LOGON_NEW_CREDENTIALS = 9, LOGON32_PROVIDER_WINNT50 = 3
+        #   this is to simulate "runas.exe /netonly" functionality
+        $Result = $Advapi32::LogonUser($UserName, $UserDomain, $NetworkCredential.Password, 9, 3, [ref]$LogonTokenHandle);$LastError = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error();
+
+        if (-not $Result) {
+            throw "[Invoke-AdaptUserImpersonation] LogonUser() Error: $(([ComponentModel.Win32Exception] $LastError).Message)"
         }
     }
 
-    PROCESS {
-        ForEach ($TargetPath in $Path) {
-            if (($TargetPath -Match '\\\\.*\\.*') -and ($PSBoundParameters['Credential'])) {
-                $HostComputer = (New-Object System.Uri($TargetPath)).Host
-                if (-not $MappedComputers[$HostComputer]) {
-                    # map IPC$ to this computer if it's not already
-                    Add-AdaptRemoteConnection -ComputerName $HostComputer -Credential $Credential
-                    $MappedComputers[$HostComputer] = $True
-                }
-            }
+    # actually impersonate the token from LogonUser()
+    $Result = $Advapi32::ImpersonateLoggedOnUser($LogonTokenHandle)
 
-            $SearcherArguments['Path'] = $TargetPath
-            Get-ChildItem @SearcherArguments | ForEach-Object {
-                # check if we're excluding folders
-                $Continue = $True
-                if ($PSBoundParameters['ExcludeFolders'] -and ($_.PSIsContainer)) {
-                    Write-Verbose "Excluding: $($_.FullName)"
-                    $Continue = $False
-                }
-                if ($LastAccessTime -and ($_.LastAccessTime -lt $LastAccessTime)) {
-                    $Continue = $False
-                }
-                if ($PSBoundParameters['LastWriteTime'] -and ($_.LastWriteTime -lt $LastWriteTime)) {
-                    $Continue = $False
-                }
-                if ($PSBoundParameters['CreationTime'] -and ($_.CreationTime -lt $CreationTime)) {
-                    $Continue = $False
-                }
-                if ($PSBoundParameters['CheckWriteAccess'] -and (-not (Test-Write -Path $_.FullName))) {
-                    $Continue = $False
-                }
-                if ($Continue) {
-                    $FileParams = @{
-                        'Path' = $_.FullName
-                        'Owner' = $((Get-Acl $_.FullName).Owner)
-                        'LastAccessTime' = $_.LastAccessTime
-                        'LastWriteTime' = $_.LastWriteTime
-                        'CreationTime' = $_.CreationTime
-                        'Length' = $_.Length
-                    }
-                    $FoundFile = New-Object -TypeName PSObject -Property $FileParams
-                    $FoundFile.PSObject.TypeNames.Insert(0, 'PowerView.FoundFile')
-                    $FoundFile
-                }
-            }
+    if (-not $Result) {
+        throw "[Invoke-AdaptUserImpersonation] ImpersonateLoggedOnUser() Error: $(([ComponentModel.Win32Exception] $LastError).Message)"
+    }
+
+    Write-Verbose "[Invoke-AdaptUserImpersonation] Alternate credentials successfully impersonated"
+    $LogonTokenHandle
+}
+
+# --- Main Function: Invoke-AdaptUserImpersonation ---
+function Invoke-AdaptUserImpersonation {
+<#
+.SYNOPSIS
+
+Creates a new "runas /netonly" type logon and impersonates the token.
+
+Author: Will Schroeder (@harmj0y)  
+License: BSD 3-Clause  
+Required Dependencies: PSReflect  
+
+.DESCRIPTION
+
+This function uses LogonUser() with the LOGON32_LOGON_NEW_CREDENTIALS LogonType
+to simulate "runas /netonly". The resulting token is then impersonated with
+ImpersonateLoggedOnUser() and the token handle is returned for later usage
+with Invoke-AdaptRevertToSelf.
+
+.PARAMETER Credential
+
+A [Management.Automation.PSCredential] object with alternate credentials
+to impersonate in the current thread space.
+
+.PARAMETER TokenHandle
+
+An IntPtr TokenHandle returned by a previous Invoke-AdaptUserImpersonation.
+If this is supplied, LogonUser() is skipped and only ImpersonateLoggedOnUser()
+is executed.
+
+.PARAMETER Quiet
+
+Suppress any warnings about STA vs MTA.
+
+.EXAMPLE
+
+$SecPassword = ConvertTo-SecureString 'Password123!' -AsPlainText -Force
+$Cred = New-Object System.Management.Automation.PSCredential('TESTLAB\dfm.a', $SecPassword)
+Invoke-AdaptUserImpersonation -Credential $Cred
+
+.OUTPUTS
+
+IntPtr
+
+The TokenHandle result from LogonUser.
+#>
+
+    [OutputType([IntPtr])]
+    [CmdletBinding(DefaultParameterSetName = 'Credential')]
+    Param(
+        [Parameter(Mandatory = $True, ParameterSetName = 'Credential')]
+        [Management.Automation.PSCredential]
+        [Management.Automation.CredentialAttribute()]
+        $Credential,
+
+        [Parameter(Mandatory = $True, ParameterSetName = 'TokenHandle')]
+        [ValidateNotNull()]
+        [IntPtr]
+        $TokenHandle,
+
+        [Switch]
+        $Quiet
+    )
+
+    if (([System.Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') -and (-not $PSBoundParameters['Quiet'])) {
+        Write-Warning "[Invoke-AdaptUserImpersonation] powershell.exe is not currently in a single-threaded apartment state, token impersonation may not work."
+    }
+
+    if ($PSBoundParameters['TokenHandle']) {
+        $LogonTokenHandle = $TokenHandle
+    }
+    else {
+        $LogonTokenHandle = [IntPtr]::Zero
+        $NetworkCredential = $Credential.GetNetworkCredential()
+        $UserDomain = $NetworkCredential.Domain
+        $UserName = $NetworkCredential.UserName
+        Write-Warning "[Invoke-AdaptUserImpersonation] Executing LogonUser() with user: $($UserDomain)\$($UserName)"
+
+        # LOGON32_LOGON_NEW_CREDENTIALS = 9, LOGON32_PROVIDER_WINNT50 = 3
+        #   this is to simulate "runas.exe /netonly" functionality
+        $Result = $Advapi32::LogonUser($UserName, $UserDomain, $NetworkCredential.Password, 9, 3, [ref]$LogonTokenHandle);$LastError = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error();
+
+        if (-not $Result) {
+            throw "[Invoke-AdaptUserImpersonation] LogonUser() Error: $(([ComponentModel.Win32Exception] $LastError).Message)"
         }
     }
 
-    END {
-        # remove the IPC$ mappings
-        $MappedComputers.Keys | Remove-AdaptRemoteConnection
+    # actually impersonate the token from LogonUser()
+    $Result = $Advapi32::ImpersonateLoggedOnUser($LogonTokenHandle)
+
+    if (-not $Result) {
+        throw "[Invoke-AdaptUserImpersonation] ImpersonateLoggedOnUser() Error: $(([ComponentModel.Win32Exception] $LastError).Message)"
     }
+
+    Write-Verbose "[Invoke-AdaptUserImpersonation] Alternate credentials successfully impersonated"
+    $LogonTokenHandle
 }

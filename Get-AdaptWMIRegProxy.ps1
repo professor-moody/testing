@@ -1,11 +1,11 @@
 #requires -version 2
 
 <#
-    Get-AdaptWMIRegProxy.ps1 - Fully Standalone Function
+    Get-AdaptWMIRegProxy.ps1 - Standalone Function
     Based on PowerView by Will Schroeder (@harmj0y)
     Original function: Get-AdaptWMIRegProxy
     
-    This file contains all required dependencies and can be run independently.
+    Clean version - no PSReflect/Win32 signatures
 #>
 
 # --- Main Function: Get-AdaptWMIRegProxy ---

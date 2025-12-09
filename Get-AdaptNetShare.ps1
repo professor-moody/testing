@@ -1,11 +1,11 @@
 #requires -version 2
 
 <#
-    Get-AdaptNetShare.ps1 - Fully Standalone Function
+    Get-AdaptNetShare.ps1 - Standalone Function
     Based on PowerView by Will Schroeder (@harmj0y)
     Original function: Get-AdaptNetShare
     
-    This file contains all required dependencies and can be run independently.
+    Requires Win32 APIs - may trigger EDR
 #>
 
 # --- New-InMemoryModule ---
@@ -1516,153 +1516,6 @@ System.DirectoryServices.DirectorySearcher
     }
 }
 
-# --- Invoke-RevertToSelf ---
-function Invoke-RevertToSelf {
-<#
-.SYNOPSIS
-
-Reverts any token impersonation.
-
-Author: Will Schroeder (@harmj0y)  
-License: BSD 3-Clause  
-Required Dependencies: PSReflect  
-
-.DESCRIPTION
-
-This function uses RevertToSelf() to revert any impersonated tokens.
-If -TokenHandle is passed (the token handle returned by Invoke-UserImpersonation),
-CloseHandle() is used to close the opened handle.
-
-.PARAMETER TokenHandle
-
-An optional IntPtr TokenHandle returned by Invoke-UserImpersonation.
-
-.EXAMPLE
-
-$SecPassword = ConvertTo-SecureString 'Password123!' -AsPlainText -Force
-$Cred = New-Object System.Management.Automation.PSCredential('TESTLAB\dfm.a', $SecPassword)
-$Token = Invoke-UserImpersonation -Credential $Cred
-Invoke-RevertToSelf -TokenHandle $Token
-#>
-
-    [CmdletBinding()]
-    Param(
-        [ValidateNotNull()]
-        [IntPtr]
-        $TokenHandle
-    )
-
-    if ($PSBoundParameters['TokenHandle']) {
-        Write-Warning "[Invoke-RevertToSelf] Reverting token impersonation and closing LogonUser() token handle"
-        $Result = $Kernel32::CloseHandle($TokenHandle)
-    }
-
-    $Result = $Advapi32::RevertToSelf();$LastError = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error();
-
-    if (-not $Result) {
-        throw "[Invoke-RevertToSelf] RevertToSelf() Error: $(([ComponentModel.Win32Exception] $LastError).Message)"
-    }
-
-    Write-Verbose "[Invoke-RevertToSelf] Token impersonation successfully reverted"
-}
-
-# --- Invoke-UserImpersonation ---
-function Invoke-UserImpersonation {
-<#
-.SYNOPSIS
-
-Creates a new "runas /netonly" type logon and impersonates the token.
-
-Author: Will Schroeder (@harmj0y)  
-License: BSD 3-Clause  
-Required Dependencies: PSReflect  
-
-.DESCRIPTION
-
-This function uses LogonUser() with the LOGON32_LOGON_NEW_CREDENTIALS LogonType
-to simulate "runas /netonly". The resulting token is then impersonated with
-ImpersonateLoggedOnUser() and the token handle is returned for later usage
-with Invoke-RevertToSelf.
-
-.PARAMETER Credential
-
-A [Management.Automation.PSCredential] object with alternate credentials
-to impersonate in the current thread space.
-
-.PARAMETER TokenHandle
-
-An IntPtr TokenHandle returned by a previous Invoke-UserImpersonation.
-If this is supplied, LogonUser() is skipped and only ImpersonateLoggedOnUser()
-is executed.
-
-.PARAMETER Quiet
-
-Suppress any warnings about STA vs MTA.
-
-.EXAMPLE
-
-$SecPassword = ConvertTo-SecureString 'Password123!' -AsPlainText -Force
-$Cred = New-Object System.Management.Automation.PSCredential('TESTLAB\dfm.a', $SecPassword)
-Invoke-UserImpersonation -Credential $Cred
-
-.OUTPUTS
-
-IntPtr
-
-The TokenHandle result from LogonUser.
-#>
-
-    [OutputType([IntPtr])]
-    [CmdletBinding(DefaultParameterSetName = 'Credential')]
-    Param(
-        [Parameter(Mandatory = $True, ParameterSetName = 'Credential')]
-        [Management.Automation.PSCredential]
-        [Management.Automation.CredentialAttribute()]
-        $Credential,
-
-        [Parameter(Mandatory = $True, ParameterSetName = 'TokenHandle')]
-        [ValidateNotNull()]
-        [IntPtr]
-        $TokenHandle,
-
-        [Switch]
-        $Quiet
-    )
-
-    if (([System.Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') -and (-not $PSBoundParameters['Quiet'])) {
-        Write-Warning "[Invoke-UserImpersonation] powershell.exe is not currently in a single-threaded apartment state, token impersonation may not work."
-    }
-
-    if ($PSBoundParameters['TokenHandle']) {
-        $LogonTokenHandle = $TokenHandle
-    }
-    else {
-        $LogonTokenHandle = [IntPtr]::Zero
-        $NetworkCredential = $Credential.GetNetworkCredential()
-        $UserDomain = $NetworkCredential.Domain
-        $UserName = $NetworkCredential.UserName
-        Write-Warning "[Invoke-UserImpersonation] Executing LogonUser() with user: $($UserDomain)\$($UserName)"
-
-        # LOGON32_LOGON_NEW_CREDENTIALS = 9, LOGON32_PROVIDER_WINNT50 = 3
-        #   this is to simulate "runas.exe /netonly" functionality
-        $Result = $Advapi32::LogonUser($UserName, $UserDomain, $NetworkCredential.Password, 9, 3, [ref]$LogonTokenHandle);$LastError = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error();
-
-        if (-not $Result) {
-            throw "[Invoke-UserImpersonation] LogonUser() Error: $(([ComponentModel.Win32Exception] $LastError).Message)"
-        }
-    }
-
-    # actually impersonate the token from LogonUser()
-    $Result = $Advapi32::ImpersonateLoggedOnUser($LogonTokenHandle)
-
-    if (-not $Result) {
-        throw "[Invoke-UserImpersonation] ImpersonateLoggedOnUser() Error: $(([ComponentModel.Win32Exception] $LastError).Message)"
-    }
-
-    Write-Verbose "[Invoke-UserImpersonation] Alternate credentials successfully impersonated"
-    $LogonTokenHandle
-}
-
 
 # --- Win32 Type Definitions ---
 $Mod = New-InMemoryModule -ModuleName Win32
@@ -2799,6 +2652,153 @@ The raw DirectoryServices.SearchResult object, if -Raw is enabled.
     }
 }
 
+# --- Invoke-AdaptRevertToSelf (dependency) ---
+function Invoke-AdaptRevertToSelf {
+<#
+.SYNOPSIS
+
+Reverts any token impersonation.
+
+Author: Will Schroeder (@harmj0y)  
+License: BSD 3-Clause  
+Required Dependencies: PSReflect  
+
+.DESCRIPTION
+
+This function uses RevertToSelf() to revert any impersonated tokens.
+If -TokenHandle is passed (the token handle returned by Invoke-AdaptUserImpersonation),
+CloseHandle() is used to close the opened handle.
+
+.PARAMETER TokenHandle
+
+An optional IntPtr TokenHandle returned by Invoke-AdaptUserImpersonation.
+
+.EXAMPLE
+
+$SecPassword = ConvertTo-SecureString 'Password123!' -AsPlainText -Force
+$Cred = New-Object System.Management.Automation.PSCredential('TESTLAB\dfm.a', $SecPassword)
+$Token = Invoke-AdaptUserImpersonation -Credential $Cred
+Invoke-AdaptRevertToSelf -TokenHandle $Token
+#>
+
+    [CmdletBinding()]
+    Param(
+        [ValidateNotNull()]
+        [IntPtr]
+        $TokenHandle
+    )
+
+    if ($PSBoundParameters['TokenHandle']) {
+        Write-Warning "[Invoke-AdaptRevertToSelf] Reverting token impersonation and closing LogonUser() token handle"
+        $Result = $Kernel32::CloseHandle($TokenHandle)
+    }
+
+    $Result = $Advapi32::RevertToSelf();$LastError = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error();
+
+    if (-not $Result) {
+        throw "[Invoke-AdaptRevertToSelf] RevertToSelf() Error: $(([ComponentModel.Win32Exception] $LastError).Message)"
+    }
+
+    Write-Verbose "[Invoke-AdaptRevertToSelf] Token impersonation successfully reverted"
+}
+
+# --- Invoke-AdaptUserImpersonation (dependency) ---
+function Invoke-AdaptUserImpersonation {
+<#
+.SYNOPSIS
+
+Creates a new "runas /netonly" type logon and impersonates the token.
+
+Author: Will Schroeder (@harmj0y)  
+License: BSD 3-Clause  
+Required Dependencies: PSReflect  
+
+.DESCRIPTION
+
+This function uses LogonUser() with the LOGON32_LOGON_NEW_CREDENTIALS LogonType
+to simulate "runas /netonly". The resulting token is then impersonated with
+ImpersonateLoggedOnUser() and the token handle is returned for later usage
+with Invoke-AdaptRevertToSelf.
+
+.PARAMETER Credential
+
+A [Management.Automation.PSCredential] object with alternate credentials
+to impersonate in the current thread space.
+
+.PARAMETER TokenHandle
+
+An IntPtr TokenHandle returned by a previous Invoke-AdaptUserImpersonation.
+If this is supplied, LogonUser() is skipped and only ImpersonateLoggedOnUser()
+is executed.
+
+.PARAMETER Quiet
+
+Suppress any warnings about STA vs MTA.
+
+.EXAMPLE
+
+$SecPassword = ConvertTo-SecureString 'Password123!' -AsPlainText -Force
+$Cred = New-Object System.Management.Automation.PSCredential('TESTLAB\dfm.a', $SecPassword)
+Invoke-AdaptUserImpersonation -Credential $Cred
+
+.OUTPUTS
+
+IntPtr
+
+The TokenHandle result from LogonUser.
+#>
+
+    [OutputType([IntPtr])]
+    [CmdletBinding(DefaultParameterSetName = 'Credential')]
+    Param(
+        [Parameter(Mandatory = $True, ParameterSetName = 'Credential')]
+        [Management.Automation.PSCredential]
+        [Management.Automation.CredentialAttribute()]
+        $Credential,
+
+        [Parameter(Mandatory = $True, ParameterSetName = 'TokenHandle')]
+        [ValidateNotNull()]
+        [IntPtr]
+        $TokenHandle,
+
+        [Switch]
+        $Quiet
+    )
+
+    if (([System.Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') -and (-not $PSBoundParameters['Quiet'])) {
+        Write-Warning "[Invoke-AdaptUserImpersonation] powershell.exe is not currently in a single-threaded apartment state, token impersonation may not work."
+    }
+
+    if ($PSBoundParameters['TokenHandle']) {
+        $LogonTokenHandle = $TokenHandle
+    }
+    else {
+        $LogonTokenHandle = [IntPtr]::Zero
+        $NetworkCredential = $Credential.GetNetworkCredential()
+        $UserDomain = $NetworkCredential.Domain
+        $UserName = $NetworkCredential.UserName
+        Write-Warning "[Invoke-AdaptUserImpersonation] Executing LogonUser() with user: $($UserDomain)\$($UserName)"
+
+        # LOGON32_LOGON_NEW_CREDENTIALS = 9, LOGON32_PROVIDER_WINNT50 = 3
+        #   this is to simulate "runas.exe /netonly" functionality
+        $Result = $Advapi32::LogonUser($UserName, $UserDomain, $NetworkCredential.Password, 9, 3, [ref]$LogonTokenHandle);$LastError = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error();
+
+        if (-not $Result) {
+            throw "[Invoke-AdaptUserImpersonation] LogonUser() Error: $(([ComponentModel.Win32Exception] $LastError).Message)"
+        }
+    }
+
+    # actually impersonate the token from LogonUser()
+    $Result = $Advapi32::ImpersonateLoggedOnUser($LogonTokenHandle)
+
+    if (-not $Result) {
+        throw "[Invoke-AdaptUserImpersonation] ImpersonateLoggedOnUser() Error: $(([ComponentModel.Win32Exception] $LastError).Message)"
+    }
+
+    Write-Verbose "[Invoke-AdaptUserImpersonation] Alternate credentials successfully impersonated"
+    $LogonTokenHandle
+}
+
 # --- Main Function: Get-AdaptNetShare ---
 function Get-AdaptNetShare {
 <#
@@ -2808,7 +2808,7 @@ Returns open shares on the local (or a remote) machine.
 
 Author: Will Schroeder (@harmj0y)  
 License: BSD 3-Clause  
-Required Dependencies: PSReflect, Invoke-UserImpersonation, Invoke-RevertToSelf  
+Required Dependencies: PSReflect, Invoke-AdaptUserImpersonation, Invoke-AdaptRevertToSelf  
 
 .DESCRIPTION
 
@@ -2823,7 +2823,7 @@ Defaults to 'localhost'.
 .PARAMETER Credential
 
 A [Management.Automation.PSCredential] object of alternate credentials
-for connection to the remote system using Invoke-UserImpersonation.
+for connection to the remote system using Invoke-AdaptUserImpersonation.
 
 .EXAMPLE
 
@@ -2877,7 +2877,7 @@ http://www.powershellmagazine.com/2014/09/25/easily-defining-enums-structs-and-w
 
     BEGIN {
         if ($PSBoundParameters['Credential']) {
-            $LogonToken = Invoke-UserImpersonation -Credential $Credential
+            $LogonToken = Invoke-AdaptUserImpersonation -Credential $Credential
         }
     }
 
@@ -2928,7 +2928,7 @@ http://www.powershellmagazine.com/2014/09/25/easily-defining-enums-structs-and-w
 
     END {
         if ($LogonToken) {
-            Invoke-RevertToSelf -TokenHandle $LogonToken
+            Invoke-AdaptRevertToSelf -TokenHandle $LogonToken
         }
     }
 }

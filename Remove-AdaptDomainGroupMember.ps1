@@ -1,11 +1,11 @@
 #requires -version 2
 
 <#
-    Remove-AdaptDomainGroupMember.ps1 - Fully Standalone Function
+    Remove-AdaptDomainGroupMember.ps1 - Standalone Function
     Based on PowerView by Will Schroeder (@harmj0y)
     Original function: Remove-AdaptDomainGroupMember
     
-    This file contains all required dependencies and can be run independently.
+    Clean version - no PSReflect/Win32 signatures
 #>
 
 # --- Convert-ADName ---

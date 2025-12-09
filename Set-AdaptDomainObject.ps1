@@ -1,39 +1,12 @@
 #requires -version 2
 
 <#
-    Set-AdaptDomainObject.ps1 - Fully Standalone Function
+    Set-AdaptDomainObject.ps1 - Standalone Function
     Based on PowerView by Will Schroeder (@harmj0y)
     Original function: Set-AdaptDomainObject
     
-    This file contains all required dependencies and can be run independently.
+    Clean version - no PSReflect/Win32 signatures
 #>
-
-# --- field ---
-function field {
-    Param (
-        [Parameter(Position = 0, Mandatory=$True)]
-        [UInt16]
-        $Position,
-
-        [Parameter(Position = 1, Mandatory=$True)]
-        [Type]
-        $Type,
-
-        [Parameter(Position = 2)]
-        [UInt16]
-        $Offset,
-
-        [Object[]]
-        $MarshalAs
-    )
-
-    @{
-        Position = $Position
-        Type = $Type -as [Type]
-        Offset = $Offset
-        MarshalAs = $MarshalAs
-    }
-}
 
 # --- Convert-ADName ---
 function Convert-ADName {

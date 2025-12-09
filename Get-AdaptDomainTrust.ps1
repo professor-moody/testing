@@ -1,11 +1,11 @@
 #requires -version 2
 
 <#
-    Get-AdaptDomainTrust.ps1 - Fully Standalone Function
+    Get-AdaptDomainTrust.ps1 - Standalone Function
     Based on PowerView by Will Schroeder (@harmj0y)
     Original function: Get-AdaptDomainTrust
     
-    This file contains all required dependencies and can be run independently.
+    Requires Win32 APIs - may trigger EDR
 #>
 
 # --- New-InMemoryModule ---

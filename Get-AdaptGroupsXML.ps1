@@ -1,11 +1,11 @@
 #requires -version 2
 
 <#
-    Get-AdaptGroupsXML.ps1 - Fully Standalone Function
+    Get-AdaptGroupsXML.ps1 - Standalone Function
     Based on PowerView by Will Schroeder (@harmj0y)
     Original function: Get-AdaptGroupsXML
     
-    This file contains all required dependencies and can be run independently.
+    Requires Win32 APIs - may trigger EDR
 #>
 
 # --- New-InMemoryModule ---
@@ -709,112 +709,6 @@ New-Struct. :P
     $ILGenerator2.Emit([Reflection.Emit.OpCodes]::Ret)
 
     $StructBuilder.CreateType()
-}
-
-# --- Add-RemoteConnection ---
-function Add-RemoteConnection {
-<#
-.SYNOPSIS
-
-Pseudo "mounts" a connection to a remote path using the specified
-credential object, allowing for access of remote resources. If a -Path isn't
-specified, a -ComputerName is required to pseudo-mount IPC$.
-
-Author: Will Schroeder (@harmj0y)  
-License: BSD 3-Clause  
-Required Dependencies: PSReflect  
-
-.DESCRIPTION
-
-This function uses WNetAddConnection2W to make a 'temporary' (i.e. not saved) connection
-to the specified remote -Path (\\UNC\share) with the alternate credentials specified in the
--Credential object. If a -Path isn't specified, a -ComputerName is required to pseudo-mount IPC$.
-
-To destroy the connection, use Remove-RemoteConnection with the same specified \\UNC\share path
-or -ComputerName.
-
-.PARAMETER ComputerName
-
-Specifies the system to add a \\ComputerName\IPC$ connection for.
-
-.PARAMETER Path
-
-Specifies the remote \\UNC\path to add the connection for.
-
-.PARAMETER Credential
-
-A [Management.Automation.PSCredential] object of alternate credentials
-for connection to the remote system.
-
-.EXAMPLE
-
-$Cred = Get-Credential
-Add-RemoteConnection -ComputerName 'PRIMARY.testlab.local' -Credential $Cred
-
-.EXAMPLE
-
-$SecPassword = ConvertTo-SecureString 'Password123!' -AsPlainText -Force
-$Cred = New-Object System.Management.Automation.PSCredential('TESTLAB\dfm.a', $SecPassword)
-Add-RemoteConnection -Path '\\PRIMARY.testlab.local\C$\' -Credential $Cred
-
-.EXAMPLE
-
-$Cred = Get-Credential
-@('PRIMARY.testlab.local','SECONDARY.testlab.local') | Add-RemoteConnection  -Credential $Cred
-#>
-
-    [CmdletBinding(DefaultParameterSetName = 'ComputerName')]
-    Param(
-        [Parameter(Position = 0, Mandatory = $True, ParameterSetName = 'ComputerName', ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
-        [Alias('HostName', 'dnshostname', 'name')]
-        [ValidateNotNullOrEmpty()]
-        [String[]]
-        $ComputerName,
-
-        [Parameter(Position = 0, ParameterSetName = 'Path', Mandatory = $True)]
-        [ValidatePattern('\\\\.*\\.*')]
-        [String[]]
-        $Path,
-
-        [Parameter(Mandatory = $True)]
-        [Management.Automation.PSCredential]
-        [Management.Automation.CredentialAttribute()]
-        $Credential
-    )
-
-    BEGIN {
-        $NetResourceInstance = [Activator]::CreateInstance($NETRESOURCEW)
-        $NetResourceInstance.dwType = 1
-    }
-
-    PROCESS {
-        $Paths = @()
-        if ($PSBoundParameters['ComputerName']) {
-            ForEach ($TargetComputerName in $ComputerName) {
-                $TargetComputerName = $TargetComputerName.Trim('\')
-                $Paths += ,"\\$TargetComputerName\IPC$"
-            }
-        }
-        else {
-            $Paths += ,$Path
-        }
-
-        ForEach ($TargetPath in $Paths) {
-            $NetResourceInstance.lpRemoteName = $TargetPath
-            Write-Verbose "[Add-RemoteConnection] Attempting to mount: $TargetPath"
-
-            # https://msdn.microsoft.com/en-us/library/windows/desktop/aa385413(v=vs.85).aspx
-            #   CONNECT_TEMPORARY = 4
-            $Result = $Mpr::WNetAddConnection2W($NetResourceInstance, $Credential.GetNetworkCredential().Password, $Credential.UserName, 4)
-
-            if ($Result -eq 0) {
-                Write-Verbose "$TargetPath successfully mounted"
-            }
-            else {
-                Throw "[Add-RemoteConnection] error mounting $TargetPath : $(([ComponentModel.Win32Exception]$Result).Message)"
-            }
-        }
-    }
 }
 
 # --- Convert-ADName ---
@@ -1751,85 +1645,6 @@ System.DirectoryServices.DirectorySearcher
     }
 }
 
-# --- Remove-RemoteConnection ---
-function Remove-RemoteConnection {
-<#
-.SYNOPSIS
-
-Destroys a connection created by New-RemoteConnection.
-
-Author: Will Schroeder (@harmj0y)  
-License: BSD 3-Clause  
-Required Dependencies: PSReflect  
-
-.DESCRIPTION
-
-This function uses WNetCancelConnection2 to destroy a connection created by
-New-RemoteConnection. If a -Path isn't specified, a -ComputerName is required to
-'unmount' \\$ComputerName\IPC$.
-
-.PARAMETER ComputerName
-
-Specifies the system to remove a \\ComputerName\IPC$ connection for.
-
-.PARAMETER Path
-
-Specifies the remote \\UNC\path to remove the connection for.
-
-.EXAMPLE
-
-Remove-RemoteConnection -ComputerName 'PRIMARY.testlab.local'
-
-.EXAMPLE
-
-Remove-RemoteConnection -Path '\\PRIMARY.testlab.local\C$\'
-
-.EXAMPLE
-
-@('PRIMARY.testlab.local','SECONDARY.testlab.local') | Remove-RemoteConnection
-#>
-
-    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '')]
-    [CmdletBinding(DefaultParameterSetName = 'ComputerName')]
-    Param(
-        [Parameter(Position = 0, Mandatory = $True, ParameterSetName = 'ComputerName', ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
-        [Alias('HostName', 'dnshostname', 'name')]
-        [ValidateNotNullOrEmpty()]
-        [String[]]
-        $ComputerName,
-
-        [Parameter(Position = 0, ParameterSetName = 'Path', Mandatory = $True)]
-        [ValidatePattern('\\\\.*\\.*')]
-        [String[]]
-        $Path
-    )
-
-    PROCESS {
-        $Paths = @()
-        if ($PSBoundParameters['ComputerName']) {
-            ForEach ($TargetComputerName in $ComputerName) {
-                $TargetComputerName = $TargetComputerName.Trim('\')
-                $Paths += ,"\\$TargetComputerName\IPC$"
-            }
-        }
-        else {
-            $Paths += ,$Path
-        }
-
-        ForEach ($TargetPath in $Paths) {
-            Write-Verbose "[Remove-RemoteConnection] Attempting to unmount: $TargetPath"
-            $Result = $Mpr::WNetCancelConnection2($TargetPath, 0, $True)
-
-            if ($Result -eq 0) {
-                Write-Verbose "$TargetPath successfully ummounted"
-            }
-            else {
-                Throw "[Remove-RemoteConnection] error unmounting $TargetPath : $(([ComponentModel.Win32Exception]$Result).Message)"
-            }
-        }
-    }
-}
-
 
 # --- Win32 Type Definitions ---
 $Mod = New-InMemoryModule -ModuleName Win32
@@ -2051,6 +1866,112 @@ $Advapi32 = $Types['advapi32']
 $Wtsapi32 = $Types['wtsapi32']
 $Mpr = $Types['Mpr']
 $Kernel32 = $Types['kernel32']
+
+# --- Add-AdaptRemoteConnection (dependency) ---
+function Add-AdaptRemoteConnection {
+<#
+.SYNOPSIS
+
+Pseudo "mounts" a connection to a remote path using the specified
+credential object, allowing for access of remote resources. If a -Path isn't
+specified, a -ComputerName is required to pseudo-mount IPC$.
+
+Author: Will Schroeder (@harmj0y)  
+License: BSD 3-Clause  
+Required Dependencies: PSReflect  
+
+.DESCRIPTION
+
+This function uses WNetAddConnection2W to make a 'temporary' (i.e. not saved) connection
+to the specified remote -Path (\\UNC\share) with the alternate credentials specified in the
+-Credential object. If a -Path isn't specified, a -ComputerName is required to pseudo-mount IPC$.
+
+To destroy the connection, use Remove-AdaptRemoteConnection with the same specified \\UNC\share path
+or -ComputerName.
+
+.PARAMETER ComputerName
+
+Specifies the system to add a \\ComputerName\IPC$ connection for.
+
+.PARAMETER Path
+
+Specifies the remote \\UNC\path to add the connection for.
+
+.PARAMETER Credential
+
+A [Management.Automation.PSCredential] object of alternate credentials
+for connection to the remote system.
+
+.EXAMPLE
+
+$Cred = Get-Credential
+Add-AdaptRemoteConnection -ComputerName 'PRIMARY.testlab.local' -Credential $Cred
+
+.EXAMPLE
+
+$SecPassword = ConvertTo-SecureString 'Password123!' -AsPlainText -Force
+$Cred = New-Object System.Management.Automation.PSCredential('TESTLAB\dfm.a', $SecPassword)
+Add-AdaptRemoteConnection -Path '\\PRIMARY.testlab.local\C$\' -Credential $Cred
+
+.EXAMPLE
+
+$Cred = Get-Credential
+@('PRIMARY.testlab.local','SECONDARY.testlab.local') | Add-AdaptRemoteConnection  -Credential $Cred
+#>
+
+    [CmdletBinding(DefaultParameterSetName = 'ComputerName')]
+    Param(
+        [Parameter(Position = 0, Mandatory = $True, ParameterSetName = 'ComputerName', ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
+        [Alias('HostName', 'dnshostname', 'name')]
+        [ValidateNotNullOrEmpty()]
+        [String[]]
+        $ComputerName,
+
+        [Parameter(Position = 0, ParameterSetName = 'Path', Mandatory = $True)]
+        [ValidatePattern('\\\\.*\\.*')]
+        [String[]]
+        $Path,
+
+        [Parameter(Mandatory = $True)]
+        [Management.Automation.PSCredential]
+        [Management.Automation.CredentialAttribute()]
+        $Credential
+    )
+
+    BEGIN {
+        $NetResourceInstance = [Activator]::CreateInstance($NETRESOURCEW)
+        $NetResourceInstance.dwType = 1
+    }
+
+    PROCESS {
+        $Paths = @()
+        if ($PSBoundParameters['ComputerName']) {
+            ForEach ($TargetComputerName in $ComputerName) {
+                $TargetComputerName = $TargetComputerName.Trim('\')
+                $Paths += ,"\\$TargetComputerName\IPC$"
+            }
+        }
+        else {
+            $Paths += ,$Path
+        }
+
+        ForEach ($TargetPath in $Paths) {
+            $NetResourceInstance.lpRemoteName = $TargetPath
+            Write-Verbose "[Add-AdaptRemoteConnection] Attempting to mount: $TargetPath"
+
+            # https://msdn.microsoft.com/en-us/library/windows/desktop/aa385413(v=vs.85).aspx
+            #   CONNECT_TEMPORARY = 4
+            $Result = $Mpr::WNetAddConnection2W($NetResourceInstance, $Credential.GetNetworkCredential().Password, $Credential.UserName, 4)
+
+            if ($Result -eq 0) {
+                Write-Verbose "$TargetPath successfully mounted"
+            }
+            else {
+                Throw "[Add-AdaptRemoteConnection] error mounting $TargetPath : $(([ComponentModel.Win32Exception]$Result).Message)"
+            }
+        }
+    }
+}
 
 # --- Get-AdaptDomain (dependency) ---
 function Get-AdaptDomain {
@@ -2897,6 +2818,85 @@ The raw DirectoryServices.SearchResult object, if -Raw is enabled.
     }
 }
 
+# --- Remove-AdaptRemoteConnection (dependency) ---
+function Remove-AdaptRemoteConnection {
+<#
+.SYNOPSIS
+
+Destroys a connection created by New-RemoteConnection.
+
+Author: Will Schroeder (@harmj0y)  
+License: BSD 3-Clause  
+Required Dependencies: PSReflect  
+
+.DESCRIPTION
+
+This function uses WNetCancelConnection2 to destroy a connection created by
+New-RemoteConnection. If a -Path isn't specified, a -ComputerName is required to
+'unmount' \\$ComputerName\IPC$.
+
+.PARAMETER ComputerName
+
+Specifies the system to remove a \\ComputerName\IPC$ connection for.
+
+.PARAMETER Path
+
+Specifies the remote \\UNC\path to remove the connection for.
+
+.EXAMPLE
+
+Remove-AdaptRemoteConnection -ComputerName 'PRIMARY.testlab.local'
+
+.EXAMPLE
+
+Remove-AdaptRemoteConnection -Path '\\PRIMARY.testlab.local\C$\'
+
+.EXAMPLE
+
+@('PRIMARY.testlab.local','SECONDARY.testlab.local') | Remove-AdaptRemoteConnection
+#>
+
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '')]
+    [CmdletBinding(DefaultParameterSetName = 'ComputerName')]
+    Param(
+        [Parameter(Position = 0, Mandatory = $True, ParameterSetName = 'ComputerName', ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
+        [Alias('HostName', 'dnshostname', 'name')]
+        [ValidateNotNullOrEmpty()]
+        [String[]]
+        $ComputerName,
+
+        [Parameter(Position = 0, ParameterSetName = 'Path', Mandatory = $True)]
+        [ValidatePattern('\\\\.*\\.*')]
+        [String[]]
+        $Path
+    )
+
+    PROCESS {
+        $Paths = @()
+        if ($PSBoundParameters['ComputerName']) {
+            ForEach ($TargetComputerName in $ComputerName) {
+                $TargetComputerName = $TargetComputerName.Trim('\')
+                $Paths += ,"\\$TargetComputerName\IPC$"
+            }
+        }
+        else {
+            $Paths += ,$Path
+        }
+
+        ForEach ($TargetPath in $Paths) {
+            Write-Verbose "[Remove-AdaptRemoteConnection] Attempting to unmount: $TargetPath"
+            $Result = $Mpr::WNetCancelConnection2($TargetPath, 0, $True)
+
+            if ($Result -eq 0) {
+                Write-Verbose "$TargetPath successfully ummounted"
+            }
+            else {
+                Throw "[Remove-AdaptRemoteConnection] error unmounting $TargetPath : $(([ComponentModel.Win32Exception]$Result).Message)"
+            }
+        }
+    }
+}
+
 # --- Main Function: Get-AdaptGroupsXML ---
 function Get-AdaptGroupsXML {
 <#
@@ -2906,13 +2906,13 @@ Helper to parse a groups.xml file path into a custom object.
 
 Author: Will Schroeder (@harmj0y)  
 License: BSD 3-Clause  
-Required Dependencies: Add-RemoteConnection, Remove-RemoteConnection, ConvertTo-SID  
+Required Dependencies: Add-AdaptRemoteConnection, Remove-AdaptRemoteConnection, ConvertTo-SID  
 
 .DESCRIPTION
 
 Parses a groups.xml into a custom object. If -Credential is passed,
-Add-RemoteConnection is used to mount \\TARGET\SYSVOL with the specified creds,
-the files are parsed, and the connection is destroyed later with Remove-RemoteConnection.
+Add-AdaptRemoteConnection is used to mount \\TARGET\SYSVOL with the specified creds,
+the files are parsed, and the connection is destroyed later with Remove-AdaptRemoteConnection.
 
 .PARAMETER GroupsXMLpath
 
@@ -2952,7 +2952,7 @@ PowerView.GroupsXML
                 $SysVolPath = "\\$((New-Object System.Uri($GroupsXMLPath)).Host)\SYSVOL"
                 if (-not $MappedPaths[$SysVolPath]) {
                     # map IPC$ to this computer if it's not already
-                    Add-RemoteConnection -Path $SysVolPath -Credential $Credential
+                    Add-AdaptRemoteConnection -Path $SysVolPath -Credential $Credential
                     $MappedPaths[$SysVolPath] = $True
                 }
             }
@@ -3024,6 +3024,6 @@ PowerView.GroupsXML
 
     END {
         # remove the SYSVOL mappings
-        $MappedPaths.Keys | ForEach-Object { Remove-RemoteConnection -Path $_ }
+        $MappedPaths.Keys | ForEach-Object { Remove-AdaptRemoteConnection -Path $_ }
     }
 }
