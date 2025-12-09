@@ -1,8 +1,9 @@
 # =====================================================================
-# CORE DEPENDENCIES - REQUIRED FOR Get-DomainUser TO FUNCTION
+# CORE DEPENDENCIES (FIXED)
 # =====================================================================
 
 # 1. UAC Enumeration Variable ($UACEnum)
+# NOTE: The definition is now a standard hashtable for simpler compatibility.
 $Global:UACEnum = @{
     'SCRIPT' = 1
     'ACCOUNTDISABLE' = 2
@@ -13,7 +14,7 @@ $Global:UACEnum = @{
     'DONT_REQ_PREAUTH' = 4194304
     'TRUSTED_FOR_DELEGATION' = 524288
     'NOT_DELEGATED' = 1048576
-} | Add-Member -MemberType ScriptProperty -Name UACEnum -PassThru -Force -Value { $Global:UACEnum }
+}
 
 # 2. Function to create the DirectorySearcher object (Get-DomainSearcher)
 function Get-DomainSearcher {
@@ -35,7 +36,6 @@ function Get-DomainSearcher {
     if ($Domain) {
         $SearchBase = "DC=$($Domain -replace '\.', ',DC=')"
     } elseif (-not $SearchBase) {
-        # Fallback if no domain/base is provided. Will likely fail in real environments
         $SearchBase = $Global:DefaultSearchBase
     }
 
@@ -43,15 +43,14 @@ function Get-DomainSearcher {
     $Searcher.SearchRoot = New-Object System.DirectoryServices.DirectoryEntry("LDAP://$SearchBase")
     $Searcher.SearchScope = [System.DirectoryServices.SearchScope]::Subtree
     
+    # Adding ReferralChasing logic to attempt fixing the "A referral was returned" error.
+    $Searcher.ReferralChasing = [System.DirectoryServices.ReferralChasingOptions]::None
+    
     if ($Properties.Count -gt 0) { $Searcher.PropertiesToLoad.AddRange($Properties) }
     if ($SearchScope) { $Searcher.SearchScope = $SearchScope }
     if ($ResultPageSize) { $Searcher.PageSize = $ResultPageSize }
     if ($ServerTimeLimit) { $Searcher.ServerTimeLimit = [System.TimeSpan]::FromSeconds($ServerTimeLimit) }
     
-    if ($Tombstone) {
-        $Searcher.SearchRoot.Properties["supportedcontrol"]
-        Write-Warning "Tombstone search requires advanced permissions and setup."
-    }
     if ($SecurityMasks) {
         $Searcher.SecurityMasks = [System.DirectoryServices.SecurityMasks]::$SecurityMasks
     }
@@ -95,7 +94,7 @@ function Convert-LDAPProperty {
 }
 
 # ---------------------------------------------------------------------
-# FUNCTION: Get-DomainUser (Your provided core logic)
+# FUNCTION: Get-DomainUser (Your logic with fixes applied)
 # ---------------------------------------------------------------------
 
 function Get-DomainUser {
@@ -186,12 +185,16 @@ function Get-DomainUser {
     )
 
     DynamicParam {
-        # Access the globally defined UACEnum variable
-        $UACValueNames = [Enum]::GetNames($Global:UACEnum)
-        # add in the negations
-        $UACValueNames = $UACValueNames | ForEach-Object {$_; "NOT_$_"}
-        # create new dynamic parameter
-        New-DynamicParameter -Name UACFilter -ValidateSet $UACValueNames -Type ([array])
+        # FIX: Changed Enum::GetNames($UACEnum) to access keys from the hashtable
+        $UACValueNames = $Global:UACEnum.Keys | ForEach-Object { "$_"; "NOT_$_" }
+
+        # FIX: Replaced custom New-DynamicParameter with standard parameter construction
+        $UACParam = New-Object System.Management.Automation.RuntimeDefinedParameter('UACFilter', [String[]])
+        $UACParam.Attributes.Add((New-Object System.Management.Automation.ValidateSetAttribute($UACValueNames)))
+        
+        $UACParamDictionary = New-Object System.Management.Automation.RuntimeDefinedParameterDictionary
+        $UACParamDictionary.Add('UACFilter', $UACParam)
+        return $UACParamDictionary
     }
 
     BEGIN {
@@ -210,10 +213,9 @@ function Get-DomainUser {
     }
 
     PROCESS {
-        #bind dynamic parameter to a friendly variable
-        if ($PSBoundParameters -and ($PSBoundParameters.Count -ne 0)) {
-            New-DynamicParameter -CreateVariables -BoundParameters $PSBoundParameters
-        }
+        # FIX: The original logic for New-DynamicParameter -CreateVariables is removed
+        # and instead we directly check for the dynamically bound parameter (UACFilter)
+        $UACFilter = $PSBoundParameters['UACFilter']
 
         if ($UserSearcher) {
             $IdentityFilter = ''
@@ -292,11 +294,13 @@ function Get-DomainUser {
             $UACFilter | Where-Object {$_} | ForEach-Object {
                 if ($_ -match 'NOT_.*') {
                     $UACField = $_.Substring(4)
-                    $UACValue = [Int]($Global:UACEnum::$UACField)
+                    # FIX: Access keys/values directly from the hashtable
+                    $UACValue = $Global:UACEnum[$UACField] 
                     $Filter += "(!(userAccountControl:1.2.840.113556.1.4.803:=$UACValue))"
                 }
                 else {
-                    $UACValue = [Int]($Global:UACEnum::$_)
+                    # FIX: Access keys/values directly from the hashtable
+                    $UACValue = $Global:UACEnum[$_]
                     $Filter += "(userAccountControl:1.2.840.113556.1.4.803:=$UACValue)"
                 }
             }
