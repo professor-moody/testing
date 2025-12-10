@@ -1,7 +1,7 @@
 function Invoke-AdaptShareHunter {
 <#
 .SYNOPSIS
-ADAPT ShareHunter v3 - Snaffler-inspired share hunting with DFS discovery and content analysis.
+ADAPT ShareHunter v4 - Snaffler-inspired share hunting with DFS discovery and content analysis.
 
 .DESCRIPTION
 Discovers and searches file shares across AD environments for sensitive content including credentials,
@@ -186,7 +186,7 @@ Invoke-AdaptShareHunter -SharePath "\\server\share" -FindFiles -SearchContent -O
           'puppet\share\doc', 'lib\ruby', 'lib\site-packages', 'usr\share\doc',
           'node_modules', 'vendor\bundle', 'vendor\cache', 'doc\openssl',
           'Anaconda3\Lib\test', 'WindowsPowerShell\Modules', 'Reference Assemblies\Microsoft',
-          'dotnet\sdk', 'dotnet\shared', 'Windows\assembly', 'ProgramData\Microsoft',
+          'Python27\Lib', 'dotnet\sdk', 'dotnet\shared', 'Windows\assembly', 'ProgramData\Microsoft',
           '$Recycle.Bin', 'System Volume Information', 'Recovery', 'PerfLogs',
           '.git', '.svn', '__pycache__', 'site-packages', 'Temp', 'tmp', 'Cache') | ForEach-Object {
             $null = $Script:SkipPaths.Add($_)
@@ -738,6 +738,7 @@ Invoke-AdaptShareHunter -SharePath "\\server\share" -FindFiles -SearchContent -O
 
         function Get-ServiceAccountsFromAD {
             Param(
+                [String]$Domain,
                 [String]$Server,
                 [Management.Automation.PSCredential]$Credential = [Management.Automation.PSCredential]::Empty
             )
@@ -746,6 +747,7 @@ Invoke-AdaptShareHunter -SharePath "\\server\share" -FindFiles -SearchContent -O
             $accounts = @()
 
             $SearcherArgs = @{}
+            if ($Domain) { $SearcherArgs['Domain'] = $Domain }
             if ($Server) { $SearcherArgs['Server'] = $Server }
             if ($Credential -ne [Management.Automation.PSCredential]::Empty) { $SearcherArgs['Credential'] = $Credential }
 
@@ -765,7 +767,9 @@ Invoke-AdaptShareHunter -SharePath "\\server\share" -FindFiles -SearchContent -O
             } catch {}
 
             # Also find accounts matching service patterns
-            $servicePatterns = @('svc_', '_svc', 'sql', 'backup', 'admin', 'service')
+            $servicePatterns = @('svc_', '_svc', 'sql', 'backup', 'admin', 'service',
+                'ccm', 'scom', 'opsmgr', 'adcs', 'MSOL', 'adsync',
+                'thycotic', 'secretserver', 'cyberark', 'configmgr')
             foreach ($pattern in $servicePatterns) {
                 $searcher.Filter = "(&(objectCategory=user)(sAMAccountName=*$pattern*))"
                 try {
@@ -812,7 +816,11 @@ Invoke-AdaptShareHunter -SharePath "\\server\share" -FindFiles -SearchContent -O
                 [DateTime]$Modified,
                 [String]$Match,
                 [String]$Context,
-                [String]$Rule
+                [String]$Rule,
+                [String]$OutFile,
+                [String]$OutFormat,
+                [String]$SnafflePath,
+                [Int]$MaxSnaffleSize
             )
 
             $finding = [PSCustomObject]@{
@@ -842,17 +850,17 @@ Invoke-AdaptShareHunter -SharePath "\\server\share" -FindFiles -SearchContent -O
 
             Write-Host $line -ForegroundColor $color
 
-            if ($OutputFile) {
-                switch ($OutputFormat) {
-                    'JSON' { $finding | ConvertTo-Json -Compress | Out-File $OutputFile -Append -Encoding UTF8 }
-                    'TSV' { "$($finding.Timestamp)`t$Triage`t$Path`t$Match" | Out-File $OutputFile -Append -Encoding UTF8 }
-                    default { $line | Out-File $OutputFile -Append -Encoding UTF8 }
+            if ($OutFile) {
+                switch ($OutFormat) {
+                    'JSON' { $finding | ConvertTo-Json -Compress | Out-File $OutFile -Append -Encoding UTF8 }
+                    'TSV' { "$($finding.Timestamp)`t$Triage`t$Path`t$Match" | Out-File $OutFile -Append -Encoding UTF8 }
+                    default { $line | Out-File $OutFile -Append -Encoding UTF8 }
                 }
             }
 
-            if ($SnaffleDir -and $Size -le $MaxFileSizeSnaffle) {
+            if ($SnafflePath -and $Size -le $MaxSnaffleSize) {
                 try {
-                    $destPath = Join-Path $SnaffleDir ($Path -replace '^\\\\', '' -replace '\\', '_')
+                    $destPath = Join-Path $SnafflePath ($Path -replace '^\\\\', '' -replace '\\', '_')
                     Copy-Item $Path $destPath -ErrorAction SilentlyContinue
                 } catch {}
             }
@@ -931,7 +939,8 @@ Invoke-AdaptShareHunter -SharePath "\\server\share" -FindFiles -SearchContent -O
 
         # Discover service accounts if requested
         if ($SearchServiceAccounts) {
-            $Script:ServiceAccounts = Get-ServiceAccountsFromAD @CredArgs
+            $svcAcctArgs = @{ Domain = $Domain } + $CredArgs
+            $Script:ServiceAccounts = Get-ServiceAccountsFromAD @svcAcctArgs
 
             # Write service accounts to file if specified
             if ($ServiceAccountsFile -and $Script:ServiceAccounts.Count -gt 0) {
@@ -1245,15 +1254,15 @@ Invoke-AdaptShareHunter -SharePath "\\server\share" -FindFiles -SearchContent -O
 
             function Get-Triage {
                 Param([String]$Name, [String]$Ext)
-                if ($BlackExtensions.Contains($Ext)) { return 'Black' }
-                if ($BlackFilenames.Contains($Name)) { return 'Black' }
-                if ($RedExtensions.Contains($Ext)) { return 'Red' }
-                if ($RedFilenames.Contains($Name)) { return 'Red' }
+                if ($Ext -in $BlackExtensions) { return 'Black' }
+                if ($Name -in $BlackFilenames) { return 'Black' }
+                if ($Ext -in $RedExtensions) { return 'Red' }
+                if ($Name -in $RedFilenames) { return 'Red' }
                 $nl = $Name.ToLower()
                 foreach ($p in $YellowNamePatterns) {
                     if ($nl.Contains($p)) { return 'Yellow' }
                 }
-                if ($YellowExtensions.Contains($Ext)) { return 'Green' }
+                if ($Ext -in $YellowExtensions) { return 'Green' }
                 return $null
             }
 
@@ -1263,23 +1272,30 @@ Invoke-AdaptShareHunter -SharePath "\\server\share" -FindFiles -SearchContent -O
                     $path = $file.FullName
                     $ext = $file.Extension.ToLower()
 
-                    if ($SkipExtensions.Contains($ext)) { return }
+                    if ($ext -in $SkipExtensions) { return }
                     if (Test-Skip -P $path) { return }
 
                     $triage = Get-Triage -Name $file.Name -Ext $ext
 
-                    # Certificate private key check
+                    # Certificate private key check - verify high-value cert files actually contain private keys
                     if ($CheckCertificates -and $triage -eq 'Black' -and
-                        @('.pfx', '.p12', '.pem', '.key') -contains $ext) {
+                        @('.pfx', '.p12', '.pem', '.key', '.der') -contains $ext) {
                         if ($ext -eq '.pem' -or $ext -eq '.key') {
+                            # PEM/KEY files - check for PRIVATE KEY marker
                             try {
                                 $c = Get-Content $path -Raw -ErrorAction Stop
                                 if ($c -notmatch 'PRIVATE KEY') {
-                                    $triage = 'Yellow'
+                                    $triage = 'Yellow'  # Downgrade - no private key found
                                 }
                             }
                             catch { $triage = 'Yellow' }
                         }
+                        elseif ($ext -eq '.der') {
+                            # DER files are typically just certificates without private keys
+                            # Downgrade unless we have reason to believe otherwise
+                            $triage = 'Yellow'
+                        }
+                        # .pfx/.p12 files always contain private keys by definition - keep as Black
                     }
 
                     # Report file-level finding
@@ -1410,7 +1426,8 @@ Invoke-AdaptShareHunter -SharePath "\\server\share" -FindFiles -SearchContent -O
                 foreach ($finding in $results) {
                     Add-Finding -Path $finding.Path -Triage $finding.Triage -Size $finding.Size `
                         -Modified $finding.Modified -Match $finding.Match -Context $finding.Context `
-                        -Rule $finding.Rule
+                        -Rule $finding.Rule -OutFile $OutputFile -OutFormat $OutputFormat `
+                        -SnafflePath $SnaffleDir -MaxSnaffleSize $MaxFileSizeSnaffle
                 }
             }
             catch {}
