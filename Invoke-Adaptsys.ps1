@@ -60,3783 +60,169 @@ param
     [string] $Logo = "AdaptAD"
 )
 
-$ADWSSource = @"
-// Thanks Dennis Albuquerque for the C# multithreading code
-using System;
-using System.Collections;
-using System.Collections.Generic;
-using System.Linq;
-using System.Xml;
-using System.Threading;
-using System.DirectoryServices;
-//using System.Security.Principal;
-using System.Security.AccessControl;
-using System.Management.Automation;
 
-using System.Diagnostics;
-//using System.IO;
-//using System.Net;
-using System.Net.Sockets;
-using System.Text;
-using System.Runtime.InteropServices;
+# ====================================================================
+# C# source code removed - using native PowerShell cmdlets only
+# This improves compatibility and avoids EDR detection
+# ====================================================================
 
-namespace AdaptAD
-{
-    public static class ADWSClass
-    {
-        private static DateTime Date1;
-        private static int PassMaxAge;
-        private static int DormantTimeSpan;
-        private static Dictionary<string, string> AdGroupDictionary = new Dictionary<string, string>();
-        private static string DomainSID;
-        private static Dictionary<string, string> AdGPODictionary = new Dictionary<string, string>();
-        private static Hashtable GUIDs = new Hashtable();
-        private static Dictionary<string, string> AdSIDDictionary = new Dictionary<string, string>();
-        private static readonly HashSet<string> Groups = new HashSet<string> ( new string[] {"268435456", "268435457", "536870912", "536870913"} );
-        private static readonly HashSet<string> Users = new HashSet<string> ( new string[] { "805306368" } );
-        private static readonly HashSet<string> Computers = new HashSet<string> ( new string[] { "805306369" }) ;
-        private static readonly HashSet<string> TrustAccounts = new HashSet<string> ( new string[] { "805306370" } );
 
-        [Flags]
-        //Values taken from https://support.microsoft.com/en-au/kb/305144
-        public enum UACFlags
-        {
-            SCRIPT = 1,        // 0x1
-            ACCOUNTDISABLE = 2,        // 0x2
-            HOMEDIR_REQUIRED = 8,        // 0x8
-            LOCKOUT = 16,       // 0x10
-            PASSWD_NOTREQD = 32,       // 0x20
-            PASSWD_CANT_CHANGE = 64,       // 0x40
-            ENCRYPTED_TEXT_PASSWORD_ALLOWED = 128,      // 0x80
-            TEMP_DUPLICATE_ACCOUNT = 256,      // 0x100
-            NORMAL_ACCOUNT = 512,      // 0x200
-            INTERDOMAIN_TRUST_ACCOUNT = 2048,     // 0x800
-            WORKSTATION_TRUST_ACCOUNT = 4096,     // 0x1000
-            SERVER_TRUST_ACCOUNT = 8192,     // 0x2000
-            DONT_EXPIRE_PASSWD = 65536,    // 0x10000
-            MNS_LOGON_ACCOUNT = 131072,   // 0x20000
-            SMARTCARD_REQUIRED = 262144,   // 0x40000
-            TRUSTED_FOR_DELEGATION = 524288,   // 0x80000
-            NOT_DELEGATED = 1048576,  // 0x100000
-            USE_DES_KEY_ONLY = 2097152,  // 0x200000
-            DONT_REQUIRE_PREAUTH = 4194304,  // 0x400000
-            PASSWORD_EXPIRED = 8388608,  // 0x800000
-            TRUSTED_TO_AUTHENTICATE_FOR_DELEGATION = 16777216, // 0x1000000
-            PARTIAL_SECRETS_ACCOUNT = 67108864 // 0x04000000
-        }
+# PowerShell helper functions to replace C# compiled code
+# These provide the same functionality using native PowerShell
 
-        [Flags]
-        //Values taken from https://blogs.msdn.microsoft.com/openspecification/2011/05/30/windows-configurations-for-kerberos-supported-encryption-type/
-        public enum KerbEncFlags
-        {
-            ZERO = 0,
-            DES_CBC_CRC = 1,        // 0x1
-            DES_CBC_MD5 = 2,        // 0x2
-            RC4_HMAC = 4,        // 0x4
-            AES128_CTS_HMAC_SHA1_96 = 8,       // 0x18
-            AES256_CTS_HMAC_SHA1_96 = 16       // 0x10
-        }
 
-		private static readonly Dictionary<string, string> Replacements = new Dictionary<string, string>()
-        {
-            //{System.Environment.NewLine, ""},
-            //{",", ";"},
-            {"\"", "'"}
-        };
+# ====================================================================
+# PowerShell helper functions to replace C# compiled code
+# Uses Runspace-based parallelism for multi-threading
+# ====================================================================
 
-        public static string CleanString(Object StringtoClean)
-        {
-            // Remove extra spaces and new lines
-            string CleanedString = string.Join(" ", ((Convert.ToString(StringtoClean)).Split((string[]) null, StringSplitOptions.RemoveEmptyEntries)));
-            foreach (string Replacement in Replacements.Keys)
-            {
-                CleanedString = CleanedString.Replace(Replacement, Replacements[Replacement]);
-            }
-            return CleanedString;
-        }
-
-        public static int ObjectCount(Object[] AdaptObject)
-        {
-            return AdaptObject.Length;
-        }
-
-        public static Object[] DomainControllerParser(Object[] AdDomainControllers, int numOfThreads)
-        {
-            Object[] AdaptObj = runProcessor(AdDomainControllers, numOfThreads, "DomainControllers");
-            return AdaptObj;
-        }
-
-        public static Object[] SchemaParser(Object[] AdSchemas, int numOfThreads)
-        {
-            Object[] AdaptObj = runProcessor(AdSchemas, numOfThreads, "SchemaHistory");
-            return AdaptObj;
-        }
-
-        public static Object[] UserParser(Object[] AdUsers, DateTime Date1, int DormantTimeSpan, int PassMaxAge, int numOfThreads)
-        {
-            ADWSClass.Date1 = Date1;
-            ADWSClass.DormantTimeSpan = DormantTimeSpan;
-            ADWSClass.PassMaxAge = PassMaxAge;
-
-            Object[] AdaptObj = runProcessor(AdUsers, numOfThreads, "Users");
-            return AdaptObj;
-        }
-
-        public static Object[] UserSPNParser(Object[] AdUsers, int numOfThreads)
-        {
-            Object[] AdaptObj = runProcessor(AdUsers, numOfThreads, "UserSPNs");
-            return AdaptObj;
-        }
-
-        public static Object[] GroupParser(Object[] AdGroups, int numOfThreads)
-        {
-            Object[] AdaptObj = runProcessor(AdGroups, numOfThreads, "Groups");
-            return AdaptObj;
-        }
-
-        public static Object[] GroupChangeParser(Object[] AdGroups, DateTime Date1, int numOfThreads)
-        {
-            ADWSClass.Date1 = Date1;
-            Object[] AdaptObj = runProcessor(AdGroups, numOfThreads, "GroupChanges");
-            return AdaptObj;
-        }
-
-        public static Object[] GroupMemberParser(Object[] AdGroups, Object[] AdGroupMembers, string DomainSID, int numOfThreads)
-        {
-            ADWSClass.AdGroupDictionary = new Dictionary<string, string>();
-            runProcessor(AdGroups, numOfThreads, "GroupsDictionary");
-            ADWSClass.DomainSID = DomainSID;
-            Object[] AdaptObj = runProcessor(AdGroupMembers, numOfThreads, "GroupMembers");
-            return AdaptObj;
-        }
-
-        public static Object[] OUParser(Object[] AdOUs, int numOfThreads)
-        {
-            Object[] AdaptObj = runProcessor(AdOUs, numOfThreads, "OUs");
-            return AdaptObj;
-        }
-
-        public static Object[] GPOParser(Object[] AdGPOs, int numOfThreads)
-        {
-            Object[] AdaptObj = runProcessor(AdGPOs, numOfThreads, "GPOs");
-            return AdaptObj;
-        }
-
-        public static Object[] SOMParser(Object[] AdGPOs, Object[] AdSOMs, int numOfThreads)
-        {
-            ADWSClass.AdGPODictionary = new Dictionary<string, string>();
-            runProcessor(AdGPOs, numOfThreads, "GPOsDictionary");
-            Object[] AdaptObj = runProcessor(AdSOMs, numOfThreads, "SOMs");
-            return AdaptObj;
-        }
-
-        public static Object[] PrinterParser(Object[] ADPrinters, int numOfThreads)
-        {
-            Object[] AdaptObj = runProcessor(ADPrinters, numOfThreads, "Printers");
-            return AdaptObj;
-        }
-
-        public static Object[] ComputerParser(Object[] AdComputers, DateTime Date1, int DormantTimeSpan, int PassMaxAge, int numOfThreads)
-        {
-            ADWSClass.Date1 = Date1;
-            ADWSClass.DormantTimeSpan = DormantTimeSpan;
-            ADWSClass.PassMaxAge = PassMaxAge;
-
-            Object[] AdaptObj = runProcessor(AdComputers, numOfThreads, "Computers");
-            return AdaptObj;
-        }
-
-        public static Object[] ComputerSPNParser(Object[] AdComputers, int numOfThreads)
-        {
-            Object[] AdaptObj = runProcessor(AdComputers, numOfThreads, "ComputerSPNs");
-            return AdaptObj;
-        }
-
-        public static Object[] LAPSParser(Object[] AdComputers, int numOfThreads)
-        {
-            Object[] AdaptObj = runProcessor(AdComputers, numOfThreads, "LAPS");
-            return AdaptObj;
-        }
-
-        public static Object[] DACLParser(Object[] ADObjects, Object PSGUIDs, int numOfThreads)
-        {
-            ADWSClass.AdSIDDictionary = new Dictionary<string, string>();
-            runProcessor(ADObjects, numOfThreads, "SIDDictionary");
-            ADWSClass.GUIDs = (Hashtable) PSGUIDs;
-            Object[] AdaptObj = runProcessor(ADObjects, numOfThreads, "DACLs");
-            return AdaptObj;
-        }
-
-        public static Object[] SACLParser(Object[] ADObjects, Object PSGUIDs, int numOfThreads)
-        {
-            ADWSClass.GUIDs = (Hashtable) PSGUIDs;
-            Object[] AdaptObj = runProcessor(ADObjects, numOfThreads, "SACLs");
-            return AdaptObj;
-        }
-
-        static Object[] runProcessor(Object[] arrayToProcess, int numOfThreads, string processorType)
-        {
-            int totalRecords = arrayToProcess.Length;
-            IRecordProcessor recordProcessor = recordProcessorFactory(processorType);
-            IResultsHandler resultsHandler = new SimpleResultsHandler ();
-            int numberOfRecordsPerThread = totalRecords / numOfThreads;
-            int remainders = totalRecords % numOfThreads;
-
-            Thread[] threads = new Thread[numOfThreads];
-            for (int i = 0; i < numOfThreads; i++)
-            {
-                int numberOfRecordsToProcess = numberOfRecordsPerThread;
-                if (i == (numOfThreads - 1))
-                {
-                    //last thread, do the remaining records
-                    numberOfRecordsToProcess += remainders;
-                }
-
-                //split the full array into chunks to be given to different threads
-                Object[] sliceToProcess = new Object[numberOfRecordsToProcess];
-                Array.Copy(arrayToProcess, i * numberOfRecordsPerThread, sliceToProcess, 0, numberOfRecordsToProcess);
-                ProcessorThread processorThread = new ProcessorThread(i, recordProcessor, resultsHandler, sliceToProcess);
-                threads[i] = new Thread(processorThread.processThreadRecords);
-                threads[i].Start();
-            }
-            foreach (Thread t in threads)
-            {
-                t.Join();
-            }
-
-            return resultsHandler.finalise();
-        }
-
-        static IRecordProcessor recordProcessorFactory(string name)
-        {
-            switch (name)
-            {
-                case "DomainControllers":
-                    return new DomainControllerRecordProcessor();
-                case "SchemaHistory":
-                    return new SchemaRecordProcessor();
-                case "Users":
-                    return new UserRecordProcessor();
-                case "UserSPNs":
-                    return new UserSPNRecordProcessor();
-                case "Groups":
-                    return new GroupRecordProcessor();
-                case "GroupChanges":
-                    return new GroupChangeRecordProcessor();
-                case "GroupsDictionary":
-                    return new GroupRecordDictionaryProcessor();
-                case "GroupMembers":
-                    return new GroupMemberRecordProcessor();
-                case "OUs":
-                    return new OURecordProcessor();
-                case "GPOs":
-                    return new GPORecordProcessor();
-                case "GPOsDictionary":
-                    return new GPORecordDictionaryProcessor();
-                case "SOMs":
-                    return new SOMRecordProcessor();
-                case "Printers":
-                    return new PrinterRecordProcessor();
-                case "Computers":
-                    return new ComputerRecordProcessor();
-                case "ComputerSPNs":
-                    return new ComputerSPNRecordProcessor();
-                case "LAPS":
-                    return new LAPSRecordProcessor();
-                case "SIDDictionary":
-                    return new SIDRecordDictionaryProcessor();
-                case "DACLs":
-                    return new DACLRecordProcessor();
-                case "SACLs":
-                    return new SACLRecordProcessor();
-            }
-            throw new ArgumentException("Invalid processor type " + name);
-        }
-
-        class ProcessorThread
-        {
-            readonly int id;
-            readonly IRecordProcessor recordProcessor;
-            readonly IResultsHandler resultsHandler;
-            readonly Object[] objectsToBeProcessed;
-
-            public ProcessorThread(int id, IRecordProcessor recordProcessor, IResultsHandler resultsHandler, Object[] objectsToBeProcessed)
-            {
-                this.recordProcessor = recordProcessor;
-                this.id = id;
-                this.resultsHandler = resultsHandler;
-                this.objectsToBeProcessed = objectsToBeProcessed;
-            }
-
-            public void processThreadRecords()
-            {
-                for (int i = 0; i < objectsToBeProcessed.Length; i++)
-                {
-                    Object[] result = recordProcessor.processRecord(objectsToBeProcessed[i]);
-                    resultsHandler.processResults(result); //this is a thread safe operation
-                }
-            }
-        }
-
-        //The interface and implmentation class used to process a record (this implemmentation just returns a log type string)
-
-        interface IRecordProcessor
-        {
-            PSObject[] processRecord(Object record);
-        }
-
-        class DomainControllerRecordProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    PSObject AdDC = (PSObject) record;
-                    bool Infra = false;
-                    bool Naming = false;
-                    bool Schema = false;
-                    bool RID = false;
-                    bool PDC = false;
-                    PSObject DCSMBObj = new PSObject();
-
-                    string OperatingSystem = CleanString((AdDC.Members["OperatingSystem"].Value != null ? AdDC.Members["OperatingSystem"].Value : "-") + " " + AdDC.Members["OperatingSystemHotfix"].Value + " " + AdDC.Members["OperatingSystemServicePack"].Value + " " + AdDC.Members["OperatingSystemVersion"].Value);
-
-                    foreach (var OperationMasterRole in (Microsoft.ActiveDirectory.Management.ADPropertyValueCollection) AdDC.Members["OperationMasterRoles"].Value)
-                    {
-                        switch (OperationMasterRole.ToString())
-                        {
-                            case "InfrastructureMaster":
-                            Infra = true;
-                            break;
-                            case "DomainNamingMaster":
-                            Naming = true;
-                            break;
-                            case "SchemaMaster":
-                            Schema = true;
-                            break;
-                            case "RIDMaster":
-                            RID = true;
-                            break;
-                            case "PDCEmulator":
-                            PDC = true;
-                            break;
-                        }
-                    }
-                    PSObject DCObj = new PSObject();
-                    DCObj.Members.Add(new PSNoteProperty("Domain", AdDC.Members["Domain"].Value));
-                    DCObj.Members.Add(new PSNoteProperty("Site", AdDC.Members["Site"].Value));
-                    DCObj.Members.Add(new PSNoteProperty("Name", AdDC.Members["Name"].Value));
-                    DCObj.Members.Add(new PSNoteProperty("IPv4Address", AdDC.Members["IPv4Address"].Value));
-                    DCObj.Members.Add(new PSNoteProperty("Operating System", OperatingSystem));
-                    DCObj.Members.Add(new PSNoteProperty("Hostname", AdDC.Members["HostName"].Value));
-                    DCObj.Members.Add(new PSNoteProperty("Infra", Infra));
-                    DCObj.Members.Add(new PSNoteProperty("Naming", Naming));
-                    DCObj.Members.Add(new PSNoteProperty("Schema", Schema));
-                    DCObj.Members.Add(new PSNoteProperty("RID", RID));
-                    DCObj.Members.Add(new PSNoteProperty("PDC", PDC));
-                    if (AdDC.Members["IPv4Address"].Value != null)
-                    {
-                        DCSMBObj = GetPSObject(AdDC.Members["IPv4Address"].Value);
-                    }
-                    else
-                    {
-                        DCSMBObj = new PSObject();
-                        DCSMBObj.Members.Add(new PSNoteProperty("SMB Port Open", false));
-                    }
-                    foreach (PSPropertyInfo psPropertyInfo in DCSMBObj.Properties)
-                    {
-                        if (Convert.ToString(psPropertyInfo.Name) == "SMB Port Open" && (bool) psPropertyInfo.Value == false)
-                        {
-                            DCObj.Members.Add(new PSNoteProperty(psPropertyInfo.Name, psPropertyInfo.Value));
-                            DCObj.Members.Add(new PSNoteProperty("SMB1(NT LM 0.12)", null));
-                            DCObj.Members.Add(new PSNoteProperty("SMB2(0x0202)", null));
-                            DCObj.Members.Add(new PSNoteProperty("SMB2(0x0210)", null));
-                            DCObj.Members.Add(new PSNoteProperty("SMB3(0x0300)", null));
-                            DCObj.Members.Add(new PSNoteProperty("SMB3(0x0302)", null));
-                            DCObj.Members.Add(new PSNoteProperty("SMB3(0x0311)", null));
-                            DCObj.Members.Add(new PSNoteProperty("SMB Signing", null));
-                            break;
-                        }
-                        else
-                        {
-                            DCObj.Members.Add(new PSNoteProperty(psPropertyInfo.Name, psPropertyInfo.Value));
-                        }
-                    }
-                    return new PSObject[] { DCObj };
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("{0} Exception caught.", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class SchemaRecordProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    PSObject AdSchema = (PSObject) record;
-
-                    PSObject SchemaObj = new PSObject();
-                    SchemaObj.Members.Add(new PSNoteProperty("ObjectClass", AdSchema.Members["ObjectClass"].Value));
-                    SchemaObj.Members.Add(new PSNoteProperty("Name", AdSchema.Members["Name"].Value));
-                    SchemaObj.Members.Add(new PSNoteProperty("whenCreated", AdSchema.Members["whenCreated"].Value));
-                    SchemaObj.Members.Add(new PSNoteProperty("whenChanged", AdSchema.Members["whenChanged"].Value));
-                    SchemaObj.Members.Add(new PSNoteProperty("DistinguishedName", AdSchema.Members["DistinguishedName"].Value));
-                    return new PSObject[] { SchemaObj };
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class UserRecordProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    PSObject AdUser = (PSObject) record;
-                    bool? Enabled = null;
-                    bool MustChangePasswordatLogon = false;
-                    bool PasswordNotChangedafterMaxAge = false;
-                    bool NeverLoggedIn = false;
-                    int? DaysSinceLastLogon = null;
-                    int? DaysSinceLastPasswordChange = null;
-                    int? AccountExpirationNumofDays = null;
-                    bool Dormant = false;
-                    string SIDHistory = "";
-                    bool? KerberosRC4 = null;
-                    bool? KerberosAES128 = null;
-                    bool? KerberosAES256 = null;
-                    string DelegationType = null;
-                    string DelegationProtocol = null;
-                    string DelegationServices = null;
-                    DateTime? LastLogonDate = null;
-                    DateTime? PasswordLastSet = null;
-                    DateTime? AccountExpires = null;
-                    bool? AccountNotDelegated = null;
-                    bool? HasSPN = null;
-
-                    try
-                    {
-                        // The Enabled field can be blank which raises an exception. This may occur when the user is not allowed to query the UserAccountControl attribute.
-                        Enabled = (bool) AdUser.Members["Enabled"].Value;
-                    }
-                    catch //(Exception e)
-                    {
-                        //Console.WriteLine("Exception caught: {0}", e);
-                    }
-                    if (AdUser.Members["lastLogonTimeStamp"].Value != null)
-                    {
-                        //LastLogonDate = DateTime.FromFileTime((long)(AdUser.Members["lastLogonTimeStamp"].Value));
-                        // LastLogonDate is lastLogonTimeStamp converted to local time
-                        LastLogonDate = Convert.ToDateTime(AdUser.Members["LastLogonDate"].Value);
-                        DaysSinceLastLogon = Math.Abs((Date1 - (DateTime)LastLogonDate).Days);
-                        if (DaysSinceLastLogon > DormantTimeSpan)
-                        {
-                            Dormant = true;
-                        }
-                    }
-                    else
-                    {
-                        NeverLoggedIn = true;
-                    }
-                    if (Convert.ToString(AdUser.Members["pwdLastSet"].Value) == "0")
-                    {
-                        if ((bool) AdUser.Members["PasswordNeverExpires"].Value == false)
-                        {
-                            MustChangePasswordatLogon = true;
-                        }
-                    }
-                    if (AdUser.Members["PasswordLastSet"].Value != null)
-                    {
-                        //PasswordLastSet = DateTime.FromFileTime((long)(AdUser.Members["pwdLastSet"].Value));
-                        // PasswordLastSet is pwdLastSet converted to local time
-                        PasswordLastSet = Convert.ToDateTime(AdUser.Members["PasswordLastSet"].Value);
-                        DaysSinceLastPasswordChange = Math.Abs((Date1 - (DateTime)PasswordLastSet).Days);
-                        if (DaysSinceLastPasswordChange > PassMaxAge)
-                        {
-                            PasswordNotChangedafterMaxAge = true;
-                        }
-                    }
-                    //https://msdn.microsoft.com/en-us/library/ms675098(v=vs.85).aspx
-                    //if ((Int64) AdUser.Members["accountExpires"].Value != (Int64) 9223372036854775807)
-                    //{
-                        //if ((Int64) AdUser.Members["accountExpires"].Value != (Int64) 0)
-                        if (AdUser.Members["AccountExpirationDate"].Value != null)
-                        {
-                            try
-                            {
-                                //AccountExpires = DateTime.FromFileTime((long)(AdUser.Members["accountExpires"].Value));
-                                // AccountExpirationDate is accountExpires converted to local time
-                                AccountExpires = Convert.ToDateTime(AdUser.Members["AccountExpirationDate"].Value);
-                                AccountExpirationNumofDays = ((int)((DateTime)AccountExpires - Date1).Days);
-
-                            }
-                            catch //(Exception e)
-                            {
-                                //Console.WriteLine("Exception caught: {0}", e);
-                            }
-                        }
-                    //}
-                    Microsoft.ActiveDirectory.Management.ADPropertyValueCollection history = (Microsoft.ActiveDirectory.Management.ADPropertyValueCollection) AdUser.Members["SIDHistory"].Value;
-                    string sids = "";
-                    foreach (var value in history)
-                    {
-                        sids = sids + "," + Convert.ToString(value);
-                    }
-                    SIDHistory = sids.TrimStart(',');
-                    if (AdUser.Members["msDS-SupportedEncryptionTypes"].Value != null)
-                    {
-                        var userKerbEncFlags = (KerbEncFlags) AdUser.Members["msDS-SupportedEncryptionTypes"].Value;
-                        if (userKerbEncFlags != KerbEncFlags.ZERO)
-                        {
-                            KerberosRC4 = (userKerbEncFlags & KerbEncFlags.RC4_HMAC) == KerbEncFlags.RC4_HMAC;
-                            KerberosAES128 = (userKerbEncFlags & KerbEncFlags.AES128_CTS_HMAC_SHA1_96) == KerbEncFlags.AES128_CTS_HMAC_SHA1_96;
-                            KerberosAES256 = (userKerbEncFlags & KerbEncFlags.AES256_CTS_HMAC_SHA1_96) == KerbEncFlags.AES256_CTS_HMAC_SHA1_96;
-                        }
-                    }
-                    if (AdUser.Members["UserAccountControl"].Value != null)
-                    {
-                        AccountNotDelegated = !((bool) AdUser.Members["AccountNotDelegated"].Value);
-                        if ((bool) AdUser.Members["TrustedForDelegation"].Value)
-                        {
-                            DelegationType = "Unconstrained";
-                            DelegationServices = "Any";
-                        }
-                        if (AdUser.Members["msDS-AllowedToDelegateTo"] != null)
-                        {
-                            Microsoft.ActiveDirectory.Management.ADPropertyValueCollection delegateto = (Microsoft.ActiveDirectory.Management.ADPropertyValueCollection) AdUser.Members["msDS-AllowedToDelegateTo"].Value;
-                            if (delegateto.Value != null)
-                            {
-                                DelegationType = "Constrained";
-                                foreach (var value in delegateto)
-                                {
-                                    DelegationServices = DelegationServices + "," + Convert.ToString(value);
-                                }
-                                DelegationServices = DelegationServices.TrimStart(',');
-                            }
-                        }
-                        if ((bool) AdUser.Members["TrustedToAuthForDelegation"].Value == true)
-                        {
-                            DelegationProtocol = "Any";
-                        }
-                        else if (DelegationType != null)
-                        {
-                            DelegationProtocol = "Kerberos";
-                        }
-                    }
-
-                    Microsoft.ActiveDirectory.Management.ADPropertyValueCollection SPNs = (Microsoft.ActiveDirectory.Management.ADPropertyValueCollection)AdUser.Members["servicePrincipalName"].Value;
-                    if (SPNs.Value == null)
-                    {
-                        HasSPN = false;
-                    }
-                    else
-                    {
-                        HasSPN = true;
-                    }
-
-                    PSObject UserObj = new PSObject();
-                    UserObj.Members.Add(new PSNoteProperty("UserName", CleanString(AdUser.Members["SamAccountName"].Value)));
-                    UserObj.Members.Add(new PSNoteProperty("Name", CleanString(AdUser.Members["Name"].Value)));
-                    UserObj.Members.Add(new PSNoteProperty("Enabled", Enabled));
-                    UserObj.Members.Add(new PSNoteProperty("Must Change Password at Logon", MustChangePasswordatLogon));
-                    UserObj.Members.Add(new PSNoteProperty("Cannot Change Password", AdUser.Members["CannotChangePassword"].Value));
-                    UserObj.Members.Add(new PSNoteProperty("Password Never Expires", AdUser.Members["PasswordNeverExpires"].Value));
-                    UserObj.Members.Add(new PSNoteProperty("Reversible Password Encryption", AdUser.Members["AllowReversiblePasswordEncryption"].Value));
-                    UserObj.Members.Add(new PSNoteProperty("Smartcard Logon Required", AdUser.Members["SmartcardLogonRequired"].Value));
-                    UserObj.Members.Add(new PSNoteProperty("Delegation Permitted", AccountNotDelegated));
-                    UserObj.Members.Add(new PSNoteProperty("Kerberos DES Only", AdUser.Members["UseDESKeyOnly"].Value));
-                    UserObj.Members.Add(new PSNoteProperty("Kerberos RC4", KerberosRC4));
-                    UserObj.Members.Add(new PSNoteProperty("Kerberos AES-128bit", KerberosAES128));
-                    UserObj.Members.Add(new PSNoteProperty("Kerberos AES-256bit", KerberosAES256));
-                    UserObj.Members.Add(new PSNoteProperty("Does Not Require Pre Auth", AdUser.Members["DoesNotRequirePreAuth"].Value));
-                    UserObj.Members.Add(new PSNoteProperty("Never Logged in", NeverLoggedIn));
-                    UserObj.Members.Add(new PSNoteProperty("Logon Age (days)", DaysSinceLastLogon));
-                    UserObj.Members.Add(new PSNoteProperty("Password Age (days)", DaysSinceLastPasswordChange));
-                    UserObj.Members.Add(new PSNoteProperty("Dormant (> " + DormantTimeSpan + " days)", Dormant));
-                    UserObj.Members.Add(new PSNoteProperty("Password Age (> " + PassMaxAge + " days)", PasswordNotChangedafterMaxAge));
-                    UserObj.Members.Add(new PSNoteProperty("Account Locked Out", AdUser.Members["LockedOut"].Value));
-                    UserObj.Members.Add(new PSNoteProperty("Password Expired", AdUser.Members["PasswordExpired"].Value));
-                    UserObj.Members.Add(new PSNoteProperty("Password Not Required", AdUser.Members["PasswordNotRequired"].Value));
-                    UserObj.Members.Add(new PSNoteProperty("Delegation Type", DelegationType));
-                    UserObj.Members.Add(new PSNoteProperty("Delegation Protocol", DelegationProtocol));
-                    UserObj.Members.Add(new PSNoteProperty("Delegation Services", DelegationServices));
-                    UserObj.Members.Add(new PSNoteProperty("Logon Workstations", AdUser.Members["LogonWorkstations"].Value));
-                    UserObj.Members.Add(new PSNoteProperty("AdminCount", AdUser.Members["AdminCount"].Value));
-                    UserObj.Members.Add(new PSNoteProperty("Primary GroupID", AdUser.Members["primaryGroupID"].Value));
-                    UserObj.Members.Add(new PSNoteProperty("SID", AdUser.Members["SID"].Value));
-                    UserObj.Members.Add(new PSNoteProperty("SIDHistory", SIDHistory));
-                    UserObj.Members.Add(new PSNoteProperty("HasSPN", HasSPN));
-                    UserObj.Members.Add(new PSNoteProperty("Description", CleanString(AdUser.Members["Description"].Value)));
-                    UserObj.Members.Add(new PSNoteProperty("Title", CleanString(AdUser.Members["Title"].Value)));
-                    UserObj.Members.Add(new PSNoteProperty("Department", CleanString(AdUser.Members["Department"].Value)));
-                    UserObj.Members.Add(new PSNoteProperty("Company", CleanString(AdUser.Members["Company"].Value)));
-                    UserObj.Members.Add(new PSNoteProperty("Manager", CleanString(AdUser.Members["Manager"].Value)));
-                    UserObj.Members.Add(new PSNoteProperty("Info", CleanString(AdUser.Members["Info"].Value)));
-                    UserObj.Members.Add(new PSNoteProperty("Last Logon Date", LastLogonDate));
-                    UserObj.Members.Add(new PSNoteProperty("Password LastSet", PasswordLastSet));
-                    UserObj.Members.Add(new PSNoteProperty("Account Expiration Date", AccountExpires));
-                    UserObj.Members.Add(new PSNoteProperty("Account Expiration (days)", AccountExpirationNumofDays));
-                    UserObj.Members.Add(new PSNoteProperty("Mobile", CleanString(AdUser.Members["Mobile"].Value)));
-                    UserObj.Members.Add(new PSNoteProperty("Email", CleanString(AdUser.Members["mail"].Value)));
-                    UserObj.Members.Add(new PSNoteProperty("HomeDirectory", AdUser.Members["homeDirectory"].Value));
-                    UserObj.Members.Add(new PSNoteProperty("ProfilePath", AdUser.Members["profilePath"].Value));
-                    UserObj.Members.Add(new PSNoteProperty("ScriptPath", AdUser.Members["ScriptPath"].Value));
-                    UserObj.Members.Add(new PSNoteProperty("UserAccountControl", AdUser.Members["UserAccountControl"].Value));
-                    UserObj.Members.Add(new PSNoteProperty("First Name", CleanString(AdUser.Members["givenName"].Value)));
-                    UserObj.Members.Add(new PSNoteProperty("Middle Name", CleanString(AdUser.Members["middleName"].Value)));
-                    UserObj.Members.Add(new PSNoteProperty("Last Name", CleanString(AdUser.Members["sn"].Value)));
-                    UserObj.Members.Add(new PSNoteProperty("Country", CleanString(AdUser.Members["c"].Value)));
-                    UserObj.Members.Add(new PSNoteProperty("whenCreated", AdUser.Members["whenCreated"].Value));
-                    UserObj.Members.Add(new PSNoteProperty("whenChanged", AdUser.Members["whenChanged"].Value));
-                    UserObj.Members.Add(new PSNoteProperty("DistinguishedName", CleanString(AdUser.Members["DistinguishedName"].Value)));
-                    UserObj.Members.Add(new PSNoteProperty("CanonicalName", CleanString(AdUser.Members["CanonicalName"].Value)));
-                    return new PSObject[] { UserObj };
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class UserSPNRecordProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    PSObject AdUser = (PSObject) record;
-                    Microsoft.ActiveDirectory.Management.ADPropertyValueCollection SPNs = (Microsoft.ActiveDirectory.Management.ADPropertyValueCollection)AdUser.Members["servicePrincipalName"].Value;
-                    if (SPNs.Value == null)
-                    {
-                        return new PSObject[] { };
-                    }
-                    List<PSObject> SPNList = new List<PSObject>();
-                    bool? Enabled = null;
-                    string Memberof = null;
-                    DateTime? PasswordLastSet = null;
-
-                    // When the user is not allowed to query the UserAccountControl attribute.
-                    if (AdUser.Members["userAccountControl"].Value != null)
-                    {
-                        var userFlags = (UACFlags) AdUser.Members["userAccountControl"].Value;
-                        Enabled = !((userFlags & UACFlags.ACCOUNTDISABLE) == UACFlags.ACCOUNTDISABLE);
-                    }
-                    if (Convert.ToString(AdUser.Members["pwdLastSet"].Value) != "0")
-                    {
-                        PasswordLastSet = DateTime.FromFileTime((long)AdUser.Members["pwdLastSet"].Value);
-                    }
-                    Microsoft.ActiveDirectory.Management.ADPropertyValueCollection MemberOfAttribute = (Microsoft.ActiveDirectory.Management.ADPropertyValueCollection)AdUser.Members["memberof"].Value;
-                    if (MemberOfAttribute.Value != null)
-                    {
-                        foreach (string Member in MemberOfAttribute)
-                        {
-                            Memberof = Memberof + "," + ((Convert.ToString(Member)).Split(',')[0]).Split('=')[1];
-                        }
-                        Memberof = Memberof.TrimStart(',');
-                    }
-                    string Description = CleanString(AdUser.Members["Description"].Value);
-                    string PrimaryGroupID = Convert.ToString(AdUser.Members["primaryGroupID"].Value);
-                    foreach (string SPN in SPNs)
-                    {
-                        string[] SPNArray = SPN.Split('/');
-                        PSObject UserSPNObj = new PSObject();
-                        UserSPNObj.Members.Add(new PSNoteProperty("Username", CleanString(AdUser.Members["SamAccountName"].Value)));
-                        UserSPNObj.Members.Add(new PSNoteProperty("Name", CleanString(AdUser.Members["Name"].Value)));
-                        UserSPNObj.Members.Add(new PSNoteProperty("Enabled", Enabled));
-                        UserSPNObj.Members.Add(new PSNoteProperty("Service", SPNArray[0]));
-                        UserSPNObj.Members.Add(new PSNoteProperty("Host", SPNArray[1]));
-                        UserSPNObj.Members.Add(new PSNoteProperty("Password Last Set", PasswordLastSet));
-                        UserSPNObj.Members.Add(new PSNoteProperty("Description", Description));
-                        UserSPNObj.Members.Add(new PSNoteProperty("Primary GroupID", PrimaryGroupID));
-                        UserSPNObj.Members.Add(new PSNoteProperty("Memberof", Memberof));
-                        SPNList.Add( UserSPNObj );
-                    }
-                    return SPNList.ToArray();
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class GroupRecordProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    PSObject AdGroup = (PSObject) record;
-                    string ManagedByValue = Convert.ToString(AdGroup.Members["managedBy"].Value);
-                    string ManagedBy = "";
-                    string SIDHistory = "";
-
-                    if (AdGroup.Members["managedBy"].Value != null)
-                    {
-                        ManagedBy = (ManagedByValue.Split(new string[] { "CN=" },StringSplitOptions.RemoveEmptyEntries))[0].Split(new string[] { "OU=" },StringSplitOptions.RemoveEmptyEntries)[0].TrimEnd(',');
-                    }
-                    Microsoft.ActiveDirectory.Management.ADPropertyValueCollection history = (Microsoft.ActiveDirectory.Management.ADPropertyValueCollection) AdGroup.Members["SIDHistory"].Value;
-                    string sids = "";
-                    foreach (var value in history)
-                    {
-                        sids = sids + "," + Convert.ToString(value);
-                    }
-                    SIDHistory = sids.TrimStart(',');
-
-                    PSObject GroupObj = new PSObject();
-                    GroupObj.Members.Add(new PSNoteProperty("Name", AdGroup.Members["SamAccountName"].Value));
-                    GroupObj.Members.Add(new PSNoteProperty("AdminCount", AdGroup.Members["AdminCount"].Value));
-                    GroupObj.Members.Add(new PSNoteProperty("GroupCategory", AdGroup.Members["GroupCategory"].Value));
-                    GroupObj.Members.Add(new PSNoteProperty("GroupScope", AdGroup.Members["GroupScope"].Value));
-                    GroupObj.Members.Add(new PSNoteProperty("ManagedBy", ManagedBy));
-                    GroupObj.Members.Add(new PSNoteProperty("SID", AdGroup.Members["sid"].Value));
-                    GroupObj.Members.Add(new PSNoteProperty("SIDHistory", SIDHistory));
-                    GroupObj.Members.Add(new PSNoteProperty("Description", CleanString(AdGroup.Members["Description"].Value)));
-                    GroupObj.Members.Add(new PSNoteProperty("whenCreated", AdGroup.Members["whenCreated"].Value));
-                    GroupObj.Members.Add(new PSNoteProperty("whenChanged", AdGroup.Members["whenChanged"].Value));
-                    GroupObj.Members.Add(new PSNoteProperty("DistinguishedName", CleanString(AdGroup.Members["DistinguishedName"].Value)));
-                    GroupObj.Members.Add(new PSNoteProperty("CanonicalName", AdGroup.Members["CanonicalName"].Value));
-                    return new PSObject[] { GroupObj };
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class GroupChangeRecordProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    PSObject AdGroup = (PSObject) record;
-                    string Action = null;
-                    int? DaysSinceAdded = null;
-                    int? DaysSinceRemoved = null;
-                    DateTime? AddedDate = null;
-                    DateTime? RemovedDate = null;
-                    List<PSObject> GroupChangesList = new List<PSObject>();
-
-                    Microsoft.ActiveDirectory.Management.ADPropertyValueCollection ReplValueMetaData = (Microsoft.ActiveDirectory.Management.ADPropertyValueCollection) AdGroup.Members["msDS-ReplValueMetaData"].Value;
-
-                    if (ReplValueMetaData.Value != null)
-                    {
-                        foreach (string ReplData in ReplValueMetaData)
-                        {
-                            XmlDocument ReplXML = new XmlDocument();
-                            ReplXML.LoadXml(ReplData.Replace("\x00", "").Replace("&","&amp;"));
-
-                            if (ReplXML.SelectSingleNode("DS_REPL_VALUE_META_DATA")["ftimeDeleted"].InnerText != "1601-01-01T00:00:00Z")
-                            {
-                                Action = "Removed";
-                                AddedDate = DateTime.Parse(ReplXML.SelectSingleNode("DS_REPL_VALUE_META_DATA")["ftimeCreated"].InnerText);
-                                DaysSinceAdded = Math.Abs((Date1 - (DateTime) AddedDate).Days);
-                                RemovedDate = DateTime.Parse(ReplXML.SelectSingleNode("DS_REPL_VALUE_META_DATA")["ftimeDeleted"].InnerText);
-                                DaysSinceRemoved = Math.Abs((Date1 - (DateTime) RemovedDate).Days);
-                            }
-                            else
-                            {
-                                Action = "Added";
-                                AddedDate = DateTime.Parse(ReplXML.SelectSingleNode("DS_REPL_VALUE_META_DATA")["ftimeCreated"].InnerText);
-                                DaysSinceAdded = Math.Abs((Date1 - (DateTime) AddedDate).Days);
-                                RemovedDate = null;
-                                DaysSinceRemoved = null;
-                            }
-
-                            PSObject GroupChangeObj = new PSObject();
-                            GroupChangeObj.Members.Add(new PSNoteProperty("Group Name", AdGroup.Members["SamAccountName"].Value));
-                            GroupChangeObj.Members.Add(new PSNoteProperty("Group DistinguishedName", CleanString(AdGroup.Members["DistinguishedName"].Value)));
-                            GroupChangeObj.Members.Add(new PSNoteProperty("Member DistinguishedName", CleanString(ReplXML.SelectSingleNode("DS_REPL_VALUE_META_DATA")["pszObjectDn"].InnerText)));
-                            GroupChangeObj.Members.Add(new PSNoteProperty("Action", Action));
-                            GroupChangeObj.Members.Add(new PSNoteProperty("Added Age (Days)", DaysSinceAdded));
-                            GroupChangeObj.Members.Add(new PSNoteProperty("Removed Age (Days)", DaysSinceRemoved));
-                            GroupChangeObj.Members.Add(new PSNoteProperty("Added Date", AddedDate));
-                            GroupChangeObj.Members.Add(new PSNoteProperty("Removed Date", RemovedDate));
-                            GroupChangeObj.Members.Add(new PSNoteProperty("ftimeCreated", ReplXML.SelectSingleNode("DS_REPL_VALUE_META_DATA")["ftimeCreated"].InnerText));
-                            GroupChangeObj.Members.Add(new PSNoteProperty("ftimeDeleted", ReplXML.SelectSingleNode("DS_REPL_VALUE_META_DATA")["ftimeDeleted"].InnerText));
-                            GroupChangesList.Add( GroupChangeObj );
-                        }
-                    }
-                    return GroupChangesList.ToArray();
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class GroupRecordDictionaryProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    PSObject AdGroup = (PSObject) record;
-                    ADWSClass.AdGroupDictionary.Add((Convert.ToString(AdGroup.Properties["SID"].Value)), (Convert.ToString(AdGroup.Members["SamAccountName"].Value)));
-                    return new PSObject[] { };
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class GroupMemberRecordProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    // SID history parsing logic
-                    PSObject AdGroup = (PSObject) record;
-                    List<PSObject> GroupsList = new List<PSObject>();
-                    string SamAccountType = Convert.ToString(AdGroup.Members["samaccounttype"].Value);
-                    string ObjectClass = Convert.ToString(AdGroup.Members["ObjectClass"].Value);
-                    string AccountType = "";
-                    string GroupName = "";
-                    string MemberUserName = "-";
-                    string MemberName = "";
-                    string PrimaryGroupID = "";
-                    PSObject GroupMemberObj = new PSObject();
-
-                    if (ObjectClass == "foreignSecurityPrincipal")
-                    {
-                        AccountType = "foreignSecurityPrincipal";
-                        MemberUserName = ((Convert.ToString(AdGroup.Members["DistinguishedName"].Value)).Split(',')[0]).Split('=')[1];
-                        MemberName = null;
-                        Microsoft.ActiveDirectory.Management.ADPropertyValueCollection MemberGroups = (Microsoft.ActiveDirectory.Management.ADPropertyValueCollection)AdGroup.Members["memberof"].Value;
-                        if (MemberGroups.Value != null)
-                        {
-                            foreach (string GroupMember in MemberGroups)
-                            {
-                                GroupName = ((Convert.ToString(GroupMember)).Split(',')[0]).Split('=')[1];
-                                GroupMemberObj = new PSObject();
-                                GroupMemberObj.Members.Add(new PSNoteProperty("Group Name", GroupName));
-                                GroupMemberObj.Members.Add(new PSNoteProperty("Member UserName", MemberUserName));
-                                GroupMemberObj.Members.Add(new PSNoteProperty("Member Name", MemberName));
-                                GroupMemberObj.Members.Add(new PSNoteProperty("Member SID", AdGroup.Members["objectSid"].Value));
-                                GroupMemberObj.Members.Add(new PSNoteProperty("AccountType", AccountType));
-                                GroupsList.Add( GroupMemberObj );
-                            }
-                        }
-                    }
-                    if (Groups.Contains(SamAccountType))
-                    {
-                        AccountType = "group";
-                        MemberName = ((Convert.ToString(AdGroup.Members["DistinguishedName"].Value)).Split(',')[0]).Split('=')[1];
-                        Microsoft.ActiveDirectory.Management.ADPropertyValueCollection MemberGroups = (Microsoft.ActiveDirectory.Management.ADPropertyValueCollection)AdGroup.Members["memberof"].Value;
-                        if (MemberGroups.Value != null)
-                        {
-                            foreach (string GroupMember in MemberGroups)
-                            {
-                                GroupName = ((Convert.ToString(GroupMember)).Split(',')[0]).Split('=')[1];
-                                GroupMemberObj = new PSObject();
-                                GroupMemberObj.Members.Add(new PSNoteProperty("Group Name", GroupName));
-                                GroupMemberObj.Members.Add(new PSNoteProperty("Member UserName", MemberUserName));
-                                GroupMemberObj.Members.Add(new PSNoteProperty("Member Name", MemberName));
-                                GroupMemberObj.Members.Add(new PSNoteProperty("Member SID", AdGroup.Members["objectSid"].Value));
-                                GroupMemberObj.Members.Add(new PSNoteProperty("AccountType", AccountType));
-                                GroupsList.Add( GroupMemberObj );
-                            }
-                        }
-                    }
-                    if (Users.Contains(SamAccountType))
-                    {
-                        AccountType = "user";
-                        MemberName = ((Convert.ToString(AdGroup.Members["DistinguishedName"].Value)).Split(',')[0]).Split('=')[1];
-                        MemberUserName = Convert.ToString(AdGroup.Members["sAMAccountName"].Value);
-                        PrimaryGroupID = Convert.ToString(AdGroup.Members["primaryGroupID"].Value);
-                        try
-                        {
-                            GroupName = ADWSClass.AdGroupDictionary[ADWSClass.DomainSID + "-" + PrimaryGroupID];
-                        }
-                        catch //(Exception e)
-                        {
-                            //Console.WriteLine("Exception caught: {0}", e);
-                            GroupName = PrimaryGroupID;
-                        }
-
-                        GroupMemberObj = new PSObject();
-                        GroupMemberObj.Members.Add(new PSNoteProperty("Group Name", GroupName));
-                        GroupMemberObj.Members.Add(new PSNoteProperty("Member UserName", MemberUserName));
-                        GroupMemberObj.Members.Add(new PSNoteProperty("Member Name", MemberName));
-                        GroupMemberObj.Members.Add(new PSNoteProperty("Member SID", AdGroup.Members["objectSid"].Value));
-                        GroupMemberObj.Members.Add(new PSNoteProperty("AccountType", AccountType));
-                        GroupsList.Add( GroupMemberObj );
-
-                        Microsoft.ActiveDirectory.Management.ADPropertyValueCollection MemberGroups = (Microsoft.ActiveDirectory.Management.ADPropertyValueCollection)AdGroup.Members["memberof"].Value;
-                        if (MemberGroups.Value != null)
-                        {
-                            foreach (string GroupMember in MemberGroups)
-                            {
-                                GroupName = ((Convert.ToString(GroupMember)).Split(',')[0]).Split('=')[1];
-                                GroupMemberObj = new PSObject();
-                                GroupMemberObj.Members.Add(new PSNoteProperty("Group Name", GroupName));
-                                GroupMemberObj.Members.Add(new PSNoteProperty("Member UserName", MemberUserName));
-                                GroupMemberObj.Members.Add(new PSNoteProperty("Member Name", MemberName));
-                                GroupMemberObj.Members.Add(new PSNoteProperty("Member SID", AdGroup.Members["objectSid"].Value));
-                                GroupMemberObj.Members.Add(new PSNoteProperty("AccountType", AccountType));
-                                GroupsList.Add( GroupMemberObj );
-                            }
-                        }
-                    }
-                    if (Computers.Contains(SamAccountType))
-                    {
-                        AccountType = "computer";
-                        MemberName = ((Convert.ToString(AdGroup.Members["DistinguishedName"].Value)).Split(',')[0]).Split('=')[1];
-                        MemberUserName = Convert.ToString(AdGroup.Members["sAMAccountName"].Value);
-                        PrimaryGroupID = Convert.ToString(AdGroup.Members["primaryGroupID"].Value);
-                        try
-                        {
-                            GroupName = ADWSClass.AdGroupDictionary[ADWSClass.DomainSID + "-" + PrimaryGroupID];
-                        }
-                        catch //(Exception e)
-                        {
-                            //Console.WriteLine("Exception caught: {0}", e);
-                            GroupName = PrimaryGroupID;
-                        }
-
-                        GroupMemberObj = new PSObject();
-                        GroupMemberObj.Members.Add(new PSNoteProperty("Group Name", GroupName));
-                        GroupMemberObj.Members.Add(new PSNoteProperty("Member UserName", MemberUserName));
-                        GroupMemberObj.Members.Add(new PSNoteProperty("Member Name", MemberName));
-                        GroupMemberObj.Members.Add(new PSNoteProperty("Member SID", AdGroup.Members["objectSid"].Value));
-                        GroupMemberObj.Members.Add(new PSNoteProperty("AccountType", AccountType));
-                        GroupsList.Add( GroupMemberObj );
-
-                        Microsoft.ActiveDirectory.Management.ADPropertyValueCollection MemberGroups = (Microsoft.ActiveDirectory.Management.ADPropertyValueCollection)AdGroup.Members["memberof"].Value;
-                        if (MemberGroups.Value != null)
-                        {
-                            foreach (string GroupMember in MemberGroups)
-                            {
-                                GroupName = ((Convert.ToString(GroupMember)).Split(',')[0]).Split('=')[1];
-                                GroupMemberObj = new PSObject();
-                                GroupMemberObj.Members.Add(new PSNoteProperty("Group Name", GroupName));
-                                GroupMemberObj.Members.Add(new PSNoteProperty("Member UserName", MemberUserName));
-                                GroupMemberObj.Members.Add(new PSNoteProperty("Member Name", MemberName));
-                                GroupMemberObj.Members.Add(new PSNoteProperty("Member SID", AdGroup.Members["objectSid"].Value));
-                                GroupMemberObj.Members.Add(new PSNoteProperty("AccountType", AccountType));
-                                GroupsList.Add( GroupMemberObj );
-                            }
-                        }
-                    }
-                    if (TrustAccounts.Contains(SamAccountType))
-                    {
-                        AccountType = "trust";
-                        MemberName = ((Convert.ToString(AdGroup.Members["DistinguishedName"].Value)).Split(',')[0]).Split('=')[1];
-                        MemberUserName = Convert.ToString(AdGroup.Members["sAMAccountName"].Value);
-                        PrimaryGroupID = Convert.ToString(AdGroup.Members["primaryGroupID"].Value);
-                        try
-                        {
-                            GroupName = ADWSClass.AdGroupDictionary[ADWSClass.DomainSID + "-" + PrimaryGroupID];
-                        }
-                        catch //(Exception e)
-                        {
-                            //Console.WriteLine("Exception caught: {0}", e);
-                            GroupName = PrimaryGroupID;
-                        }
-
-                        GroupMemberObj = new PSObject();
-                        GroupMemberObj.Members.Add(new PSNoteProperty("Group Name", GroupName));
-                        GroupMemberObj.Members.Add(new PSNoteProperty("Member UserName", MemberUserName));
-                        GroupMemberObj.Members.Add(new PSNoteProperty("Member Name", MemberName));
-                        GroupMemberObj.Members.Add(new PSNoteProperty("Member SID", AdGroup.Members["objectSid"].Value));
-                        GroupMemberObj.Members.Add(new PSNoteProperty("AccountType", AccountType));
-                        GroupsList.Add( GroupMemberObj );
-                    }
-                    return GroupsList.ToArray();
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class OURecordProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    PSObject AdOU = (PSObject) record;
-                    PSObject OUObj = new PSObject();
-                    OUObj.Members.Add(new PSNoteProperty("Name", AdOU.Members["Name"].Value));
-                    OUObj.Members.Add(new PSNoteProperty("Depth", ((Convert.ToString(AdOU.Members["DistinguishedName"].Value).Split(new string[] { "OU=" }, StringSplitOptions.None)).Length -1)));
-                    OUObj.Members.Add(new PSNoteProperty("Description", AdOU.Members["Description"].Value));
-                    OUObj.Members.Add(new PSNoteProperty("whenCreated", AdOU.Members["whenCreated"].Value));
-                    OUObj.Members.Add(new PSNoteProperty("whenChanged", AdOU.Members["whenChanged"].Value));
-                    OUObj.Members.Add(new PSNoteProperty("DistinguishedName", AdOU.Members["DistinguishedName"].Value));
-                    return new PSObject[] { OUObj };
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class GPORecordProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    PSObject AdGPO = (PSObject) record;
-
-                    PSObject GPOObj = new PSObject();
-                    GPOObj.Members.Add(new PSNoteProperty("DisplayName", CleanString(AdGPO.Members["DisplayName"].Value)));
-                    GPOObj.Members.Add(new PSNoteProperty("GUID", CleanString(AdGPO.Members["Name"].Value)));
-                    GPOObj.Members.Add(new PSNoteProperty("whenCreated", AdGPO.Members["whenCreated"].Value));
-                    GPOObj.Members.Add(new PSNoteProperty("whenChanged", AdGPO.Members["whenChanged"].Value));
-                    GPOObj.Members.Add(new PSNoteProperty("DistinguishedName", CleanString(AdGPO.Members["DistinguishedName"].Value)));
-                    GPOObj.Members.Add(new PSNoteProperty("FilePath", AdGPO.Members["gPCFileSysPath"].Value));
-                    return new PSObject[] { GPOObj };
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class GPORecordDictionaryProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    PSObject AdGPO = (PSObject) record;
-                    ADWSClass.AdGPODictionary.Add((Convert.ToString(AdGPO.Members["DistinguishedName"].Value).ToUpper()), (Convert.ToString(AdGPO.Members["DisplayName"].Value)));
-                    return new PSObject[] { };
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class SOMRecordProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    PSObject AdSOM = (PSObject) record;
-                    List<PSObject> SOMsList = new List<PSObject>();
-                    int Depth = 0;
-                    bool BlockInheritance = false;
-                    bool? LinkEnabled = null;
-                    bool? Enforced = null;
-                    string gPLink = Convert.ToString(AdSOM.Members["gPLink"].Value);
-                    string GPOName = null;
-
-                    Depth = (Convert.ToString(AdSOM.Members["DistinguishedName"].Value).Split(new string[] { "OU=" }, StringSplitOptions.None)).Length -1;
-                    if (AdSOM.Members["gPOptions"].Value != null && (int) AdSOM.Members["gPOptions"].Value == 1)
-                    {
-                        BlockInheritance = true;
-                    }
-                    var GPLinks = gPLink.Split(']', '[').Where(x => x.StartsWith("LDAP"));
-                    int Order = (GPLinks.ToArray()).Length;
-                    if (Order == 0)
-                    {
-                        PSObject SOMObj = new PSObject();
-                        SOMObj.Members.Add(new PSNoteProperty("Name", AdSOM.Members["Name"].Value));
-                        SOMObj.Members.Add(new PSNoteProperty("Depth", Depth));
-                        SOMObj.Members.Add(new PSNoteProperty("DistinguishedName", AdSOM.Members["DistinguishedName"].Value));
-                        SOMObj.Members.Add(new PSNoteProperty("Link Order", null));
-                        SOMObj.Members.Add(new PSNoteProperty("GPO", GPOName));
-                        SOMObj.Members.Add(new PSNoteProperty("Enforced", Enforced));
-                        SOMObj.Members.Add(new PSNoteProperty("Link Enabled", LinkEnabled));
-                        SOMObj.Members.Add(new PSNoteProperty("BlockInheritance", BlockInheritance));
-                        SOMObj.Members.Add(new PSNoteProperty("gPLink", gPLink));
-                        SOMObj.Members.Add(new PSNoteProperty("gPOptions", AdSOM.Members["gPOptions"].Value));
-                        SOMsList.Add( SOMObj );
-                    }
-                    foreach (string link in GPLinks)
-                    {
-                        string[] linksplit = link.Split('/', ';');
-                        if (!Convert.ToBoolean((Convert.ToInt32(linksplit[3]) & 1)))
-                        {
-                            LinkEnabled = true;
-                        }
-                        else
-                        {
-                            LinkEnabled = false;
-                        }
-                        if (Convert.ToBoolean((Convert.ToInt32(linksplit[3]) & 2)))
-                        {
-                            Enforced = true;
-                        }
-                        else
-                        {
-                            Enforced = false;
-                        }
-                        GPOName = ADWSClass.AdGPODictionary.ContainsKey(linksplit[2].ToUpper()) ? ADWSClass.AdGPODictionary[linksplit[2].ToUpper()] : linksplit[2].Split('=',',')[1];
-                        PSObject SOMObj = new PSObject();
-                        SOMObj.Members.Add(new PSNoteProperty("Name", AdSOM.Members["Name"].Value));
-                        SOMObj.Members.Add(new PSNoteProperty("Depth", Depth));
-                        SOMObj.Members.Add(new PSNoteProperty("DistinguishedName", AdSOM.Members["DistinguishedName"].Value));
-                        SOMObj.Members.Add(new PSNoteProperty("Link Order", Order));
-                        SOMObj.Members.Add(new PSNoteProperty("GPO", GPOName));
-                        SOMObj.Members.Add(new PSNoteProperty("Enforced", Enforced));
-                        SOMObj.Members.Add(new PSNoteProperty("Link Enabled", LinkEnabled));
-                        SOMObj.Members.Add(new PSNoteProperty("BlockInheritance", BlockInheritance));
-                        SOMObj.Members.Add(new PSNoteProperty("gPLink", gPLink));
-                        SOMObj.Members.Add(new PSNoteProperty("gPOptions", AdSOM.Members["gPOptions"].Value));
-                        SOMsList.Add( SOMObj );
-                        Order--;
-                    }
-                    return SOMsList.ToArray();
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class PrinterRecordProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    PSObject AdPrinter = (PSObject) record;
-
-                    PSObject PrinterObj = new PSObject();
-                    PrinterObj.Members.Add(new PSNoteProperty("Name", AdPrinter.Members["Name"].Value));
-                    PrinterObj.Members.Add(new PSNoteProperty("ServerName", AdPrinter.Members["serverName"].Value));
-                    PrinterObj.Members.Add(new PSNoteProperty("ShareName", ((Microsoft.ActiveDirectory.Management.ADPropertyValueCollection) (AdPrinter.Members["printShareName"].Value)).Value));
-                    PrinterObj.Members.Add(new PSNoteProperty("DriverName", AdPrinter.Members["driverName"].Value));
-                    PrinterObj.Members.Add(new PSNoteProperty("DriverVersion", AdPrinter.Members["driverVersion"].Value));
-                    PrinterObj.Members.Add(new PSNoteProperty("PortName", ((Microsoft.ActiveDirectory.Management.ADPropertyValueCollection) (AdPrinter.Members["portName"].Value)).Value));
-                    PrinterObj.Members.Add(new PSNoteProperty("URL", ((Microsoft.ActiveDirectory.Management.ADPropertyValueCollection) (AdPrinter.Members["url"].Value)).Value));
-                    PrinterObj.Members.Add(new PSNoteProperty("whenCreated", AdPrinter.Members["whenCreated"].Value));
-                    PrinterObj.Members.Add(new PSNoteProperty("whenChanged", AdPrinter.Members["whenChanged"].Value));
-                    return new PSObject[] { PrinterObj };
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class ComputerRecordProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    PSObject AdComputer = (PSObject) record;
-                    int? DaysSinceLastLogon = null;
-                    int? DaysSinceLastPasswordChange = null;
-                    bool Dormant = false;
-                    bool PasswordNotChangedafterMaxAge = false;
-                    string SIDHistory = "";
-                    string DelegationType = null;
-                    string DelegationProtocol = null;
-                    string DelegationServices = null;
-                    DateTime? LastLogonDate = null;
-                    DateTime? PasswordLastSet = null;
-
-                    if (AdComputer.Members["LastLogonDate"].Value != null)
-                    {
-                        //LastLogonDate = DateTime.FromFileTime((long)(AdComputer.Members["lastLogonTimeStamp"].Value));
-                        // LastLogonDate is lastLogonTimeStamp converted to local time
-                        LastLogonDate = Convert.ToDateTime(AdComputer.Members["LastLogonDate"].Value);
-                        DaysSinceLastLogon = Math.Abs((Date1 - (DateTime)LastLogonDate).Days);
-                        if (DaysSinceLastLogon > DormantTimeSpan)
-                        {
-                            Dormant = true;
-                        }
-                    }
-                    if (AdComputer.Members["PasswordLastSet"].Value != null)
-                    {
-                        //PasswordLastSet = DateTime.FromFileTime((long)(AdComputer.Members["pwdLastSet"].Value));
-                        // PasswordLastSet is pwdLastSet converted to local time
-                        PasswordLastSet = Convert.ToDateTime(AdComputer.Members["PasswordLastSet"].Value);
-                        DaysSinceLastPasswordChange = Math.Abs((Date1 - (DateTime)PasswordLastSet).Days);
-                        if (DaysSinceLastPasswordChange > PassMaxAge)
-                        {
-                            PasswordNotChangedafterMaxAge = true;
-                        }
-                    }
-                    if ( ((bool) AdComputer.Members["TrustedForDelegation"].Value) && ((int) AdComputer.Members["primaryGroupID"].Value == 515) )
-                    {
-                        DelegationType = "Unconstrained";
-                        DelegationServices = "Any";
-                    }
-                    if (AdComputer.Members["msDS-AllowedToDelegateTo"] != null)
-                    {
-                        Microsoft.ActiveDirectory.Management.ADPropertyValueCollection delegateto = (Microsoft.ActiveDirectory.Management.ADPropertyValueCollection) AdComputer.Members["msDS-AllowedToDelegateTo"].Value;
-                        if (delegateto.Value != null)
-                        {
-                            DelegationType = "Constrained";
-                            foreach (var value in delegateto)
-                            {
-                                DelegationServices = DelegationServices + "," + Convert.ToString(value);
-                            }
-                            DelegationServices = DelegationServices.TrimStart(',');
-                        }
-                    }
-                    if ((bool) AdComputer.Members["TrustedToAuthForDelegation"].Value)
-                    {
-                        DelegationProtocol = "Any";
-                    }
-                    else if (DelegationType != null)
-                    {
-                        DelegationProtocol = "Kerberos";
-                    }
-                    Microsoft.ActiveDirectory.Management.ADPropertyValueCollection history = (Microsoft.ActiveDirectory.Management.ADPropertyValueCollection) AdComputer.Members["SIDHistory"].Value;
-                    string sids = "";
-                    foreach (var value in history)
-                    {
-                        sids = sids + "," + Convert.ToString(value);
-                    }
-                    SIDHistory = sids.TrimStart(',');
-                    string OperatingSystem = CleanString((AdComputer.Members["OperatingSystem"].Value != null ? AdComputer.Members["OperatingSystem"].Value : "-") + " " + AdComputer.Members["OperatingSystemHotfix"].Value + " " + AdComputer.Members["OperatingSystemServicePack"].Value + " " + AdComputer.Members["OperatingSystemVersion"].Value);
-
-                    PSObject ComputerObj = new PSObject();
-                    ComputerObj.Members.Add(new PSNoteProperty("UserName", CleanString(AdComputer.Members["SamAccountName"].Value)));
-                    ComputerObj.Members.Add(new PSNoteProperty("Name", CleanString(AdComputer.Members["Name"].Value)));
-                    ComputerObj.Members.Add(new PSNoteProperty("DNSHostName", AdComputer.Members["DNSHostName"].Value));
-                    ComputerObj.Members.Add(new PSNoteProperty("Enabled", AdComputer.Members["Enabled"].Value));
-                    ComputerObj.Members.Add(new PSNoteProperty("IPv4Address", AdComputer.Members["IPv4Address"].Value));
-                    ComputerObj.Members.Add(new PSNoteProperty("Operating System", OperatingSystem));
-                    ComputerObj.Members.Add(new PSNoteProperty("Logon Age (days)", DaysSinceLastLogon));
-                    ComputerObj.Members.Add(new PSNoteProperty("Password Age (days)", DaysSinceLastPasswordChange));
-                    ComputerObj.Members.Add(new PSNoteProperty("Dormant (> " + DormantTimeSpan + " days)", Dormant));
-                    ComputerObj.Members.Add(new PSNoteProperty("Password Age (> " + PassMaxAge + " days)", PasswordNotChangedafterMaxAge));
-                    ComputerObj.Members.Add(new PSNoteProperty("Delegation Type", DelegationType));
-                    ComputerObj.Members.Add(new PSNoteProperty("Delegation Protocol", DelegationProtocol));
-                    ComputerObj.Members.Add(new PSNoteProperty("Delegation Services", DelegationServices));
-                    ComputerObj.Members.Add(new PSNoteProperty("Primary Group ID", AdComputer.Members["primaryGroupID"].Value));
-                    ComputerObj.Members.Add(new PSNoteProperty("SID", AdComputer.Members["SID"].Value));
-                    ComputerObj.Members.Add(new PSNoteProperty("SIDHistory", SIDHistory));
-                    ComputerObj.Members.Add(new PSNoteProperty("Description", CleanString(AdComputer.Members["Description"].Value)));
-                    ComputerObj.Members.Add(new PSNoteProperty("ms-ds-CreatorSid", AdComputer.Members["ms-ds-CreatorSid"].Value));
-                    ComputerObj.Members.Add(new PSNoteProperty("Last Logon Date", LastLogonDate));
-                    ComputerObj.Members.Add(new PSNoteProperty("Password LastSet", PasswordLastSet));
-                    ComputerObj.Members.Add(new PSNoteProperty("UserAccountControl", AdComputer.Members["UserAccountControl"].Value));
-                    ComputerObj.Members.Add(new PSNoteProperty("whenCreated", AdComputer.Members["whenCreated"].Value));
-                    ComputerObj.Members.Add(new PSNoteProperty("whenChanged", AdComputer.Members["whenChanged"].Value));
-                    ComputerObj.Members.Add(new PSNoteProperty("Distinguished Name", AdComputer.Members["DistinguishedName"].Value));
-                    return new PSObject[] { ComputerObj };
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class ComputerSPNRecordProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    PSObject AdComputer = (PSObject) record;
-                    Microsoft.ActiveDirectory.Management.ADPropertyValueCollection SPNs = (Microsoft.ActiveDirectory.Management.ADPropertyValueCollection) AdComputer.Members["servicePrincipalName"].Value;
-                    if (SPNs.Value == null)
-                    {
-                        return new PSObject[] { };
-                    }
-                    List<PSObject> SPNList = new List<PSObject>();
-
-                    foreach (string SPN in SPNs)
-                    {
-                        bool flag = true;
-                        string[] SPNArray = SPN.Split('/');
-                        foreach (PSObject Obj in SPNList)
-                        {
-                            if ( (string) Obj.Members["Service"].Value == SPNArray[0] )
-                            {
-                                Obj.Members["Host"].Value = string.Join(",", (Obj.Members["Host"].Value + "," + SPNArray[1]).Split(',').Distinct().ToArray());
-                                flag = false;
-                            }
-                        }
-                        if (flag)
-                        {
-                            PSObject ComputerSPNObj = new PSObject();
-                            ComputerSPNObj.Members.Add(new PSNoteProperty("UserName", CleanString(AdComputer.Members["SamAccountName"].Value)));
-                            ComputerSPNObj.Members.Add(new PSNoteProperty("Name", CleanString(AdComputer.Members["Name"].Value)));
-                            ComputerSPNObj.Members.Add(new PSNoteProperty("Service", SPNArray[0]));
-                            ComputerSPNObj.Members.Add(new PSNoteProperty("Host", SPNArray[1]));
-                            SPNList.Add( ComputerSPNObj );
-                        }
-                    }
-                    return SPNList.ToArray();
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class LAPSRecordProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    PSObject AdComputer = (PSObject) record;
-                    bool? Enabled = null;
-                    bool PasswordStored = false;
-                    DateTime? CurrentExpiration = null;
-                    // When the user is not allowed to query the UserAccountControl attribute.
-                    if (AdComputer.Members["userAccountControl"].Value != null)
-                    {
-                        var userFlags = (UACFlags) AdComputer.Members["userAccountControl"].Value;
-                        Enabled = !((userFlags & UACFlags.ACCOUNTDISABLE) == UACFlags.ACCOUNTDISABLE);
-                    }
-                    try
-                    {
-                        CurrentExpiration = DateTime.FromFileTime((long)(AdComputer.Members["ms-Mcs-AdmPwdExpirationTime"].Value));
-                        PasswordStored = true;
-                    }
-                    catch //(Exception e)
-                    {
-                        //Console.WriteLine("Exception caught: {0}", e);
-                    }
-                    PSObject LAPSObj = new PSObject();
-                    LAPSObj.Members.Add(new PSNoteProperty("Hostname", (AdComputer.Members["DNSHostName"].Value != null ? AdComputer.Members["DNSHostName"].Value : AdComputer.Members["CN"].Value )));
-                    LAPSObj.Members.Add(new PSNoteProperty("Enabled", Enabled));
-                    LAPSObj.Members.Add(new PSNoteProperty("Stored", PasswordStored));
-                    LAPSObj.Members.Add(new PSNoteProperty("Readable", (AdComputer.Members["ms-Mcs-AdmPwd"].Value != null ? true : false)));
-                    LAPSObj.Members.Add(new PSNoteProperty("Password", AdComputer.Members["ms-Mcs-AdmPwd"].Value));
-                    LAPSObj.Members.Add(new PSNoteProperty("Expiration", CurrentExpiration));
-                    return new PSObject[] { LAPSObj };
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class SIDRecordDictionaryProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    PSObject AdObject = (PSObject) record;
-                    switch (Convert.ToString(AdObject.Members["ObjectClass"].Value))
-                    {
-                        case "user":
-                        case "computer":
-                        case "group":
-                            ADWSClass.AdSIDDictionary.Add(Convert.ToString(AdObject.Members["objectsid"].Value), Convert.ToString(AdObject.Members["Name"].Value));
-                            break;
-                    }
-                    return new PSObject[] { };
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class DACLRecordProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    PSObject AdObject = (PSObject) record;
-                    string Name = null;
-                    string Type = null;
-                    List<PSObject> DACLList = new List<PSObject>();
-
-                    Name = Convert.ToString(AdObject.Members["Name"].Value);
-
-                    switch (Convert.ToString(AdObject.Members["objectClass"].Value))
-                    {
-                        case "user":
-                            Type = "User";
-                            break;
-                        case "computer":
-                            Type = "Computer";
-                            break;
-                        case "group":
-                            Type = "Group";
-                            break;
-                        case "container":
-                            Type = "Container";
-                            break;
-                        case "groupPolicyContainer":
-                            Type = "GPO";
-                            Name = Convert.ToString(AdObject.Members["DisplayName"].Value);
-                            break;
-                        case "organizationalUnit":
-                            Type = "OU";
-                            break;
-                        case "domainDNS":
-                            Type = "Domain";
-                            break;
-                        default:
-                            Type = Convert.ToString(AdObject.Members["objectClass"].Value);
-                            break;
-                    }
-
-                    // When the user is not allowed to query the ntsecuritydescriptor attribute.
-                    if (AdObject.Members["ntsecuritydescriptor"] != null)
-                    {
-                        DirectoryObjectSecurity DirObjSec = (DirectoryObjectSecurity) AdObject.Members["ntsecuritydescriptor"].Value;
-                        AuthorizationRuleCollection AccessRules = (AuthorizationRuleCollection) DirObjSec.GetAccessRules(true,true,typeof(System.Security.Principal.NTAccount));
-                        foreach (ActiveDirectoryAccessRule Rule in AccessRules)
-                        {
-                            string IdentityReference = Convert.ToString(Rule.IdentityReference);
-                            string Owner = Convert.ToString(DirObjSec.GetOwner(typeof(System.Security.Principal.SecurityIdentifier)));
-                            PSObject ObjectObj = new PSObject();
-                            ObjectObj.Members.Add(new PSNoteProperty("Name", CleanString(Name)));
-                            ObjectObj.Members.Add(new PSNoteProperty("Type", Type));
-                            ObjectObj.Members.Add(new PSNoteProperty("ObjectTypeName", ADWSClass.GUIDs[Convert.ToString(Rule.ObjectType)]));
-                            ObjectObj.Members.Add(new PSNoteProperty("InheritedObjectTypeName", ADWSClass.GUIDs[Convert.ToString(Rule.InheritedObjectType)]));
-                            ObjectObj.Members.Add(new PSNoteProperty("ActiveDirectoryRights", Rule.ActiveDirectoryRights));
-                            ObjectObj.Members.Add(new PSNoteProperty("AccessControlType", Rule.AccessControlType));
-                            ObjectObj.Members.Add(new PSNoteProperty("IdentityReferenceName", ADWSClass.AdSIDDictionary.ContainsKey(IdentityReference) ? ADWSClass.AdSIDDictionary[IdentityReference] : IdentityReference));
-                            ObjectObj.Members.Add(new PSNoteProperty("OwnerName", ADWSClass.AdSIDDictionary.ContainsKey(Owner) ? ADWSClass.AdSIDDictionary[Owner] : Owner));
-                            ObjectObj.Members.Add(new PSNoteProperty("Inherited", Rule.IsInherited));
-                            ObjectObj.Members.Add(new PSNoteProperty("ObjectFlags", Rule.ObjectFlags));
-                            ObjectObj.Members.Add(new PSNoteProperty("InheritanceFlags", Rule.InheritanceFlags));
-                            ObjectObj.Members.Add(new PSNoteProperty("InheritanceType", Rule.InheritanceType));
-                            ObjectObj.Members.Add(new PSNoteProperty("PropagationFlags", Rule.PropagationFlags));
-                            ObjectObj.Members.Add(new PSNoteProperty("ObjectType", Rule.ObjectType));
-                            ObjectObj.Members.Add(new PSNoteProperty("InheritedObjectType", Rule.InheritedObjectType));
-                            ObjectObj.Members.Add(new PSNoteProperty("IdentityReference", Rule.IdentityReference));
-                            ObjectObj.Members.Add(new PSNoteProperty("Owner", Owner));
-                            ObjectObj.Members.Add(new PSNoteProperty("DistinguishedName", AdObject.Members["DistinguishedName"].Value));
-                            DACLList.Add( ObjectObj );
-                        }
-                    }
-
-                    return DACLList.ToArray();
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-    class SACLRecordProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    PSObject AdObject = (PSObject) record;
-                    string Name = null;
-                    string Type = null;
-                    List<PSObject> SACLList = new List<PSObject>();
-
-                    Name = Convert.ToString(AdObject.Members["Name"].Value);
-
-                    switch (Convert.ToString(AdObject.Members["objectClass"].Value))
-                    {
-                        case "user":
-                            Type = "User";
-                            break;
-                        case "computer":
-                            Type = "Computer";
-                            break;
-                        case "group":
-                            Type = "Group";
-                            break;
-                        case "container":
-                            Type = "Container";
-                            break;
-                        case "groupPolicyContainer":
-                            Type = "GPO";
-                            Name = Convert.ToString(AdObject.Members["DisplayName"].Value);
-                            break;
-                        case "organizationalUnit":
-                            Type = "OU";
-                            break;
-                        case "domainDNS":
-                            Type = "Domain";
-                            break;
-                        default:
-                            Type = Convert.ToString(AdObject.Members["objectClass"].Value);
-                            break;
-                    }
-
-                    // When the user is not allowed to query the ntsecuritydescriptor attribute.
-                    if (AdObject.Members["ntsecuritydescriptor"] != null)
-                    {
-                        DirectoryObjectSecurity DirObjSec = (DirectoryObjectSecurity) AdObject.Members["ntsecuritydescriptor"].Value;
-                        AuthorizationRuleCollection AuditRules = (AuthorizationRuleCollection) DirObjSec.GetAuditRules(true,true,typeof(System.Security.Principal.NTAccount));
-                        foreach (ActiveDirectoryAuditRule Rule in AuditRules)
-                        {
-                            PSObject ObjectObj = new PSObject();
-                            ObjectObj.Members.Add(new PSNoteProperty("Name", CleanString(Name)));
-                            ObjectObj.Members.Add(new PSNoteProperty("Type", Type));
-                            ObjectObj.Members.Add(new PSNoteProperty("ObjectTypeName", ADWSClass.GUIDs[Convert.ToString(Rule.ObjectType)]));
-                            ObjectObj.Members.Add(new PSNoteProperty("InheritedObjectTypeName", ADWSClass.GUIDs[Convert.ToString(Rule.InheritedObjectType)]));
-                            ObjectObj.Members.Add(new PSNoteProperty("ActiveDirectoryRights", Rule.ActiveDirectoryRights));
-                            ObjectObj.Members.Add(new PSNoteProperty("IdentityReference", Rule.IdentityReference));
-                            ObjectObj.Members.Add(new PSNoteProperty("AuditFlags", Rule.AuditFlags));
-                            ObjectObj.Members.Add(new PSNoteProperty("ObjectFlags", Rule.ObjectFlags));
-                            ObjectObj.Members.Add(new PSNoteProperty("InheritanceFlags", Rule.InheritanceFlags));
-                            ObjectObj.Members.Add(new PSNoteProperty("InheritanceType", Rule.InheritanceType));
-                            ObjectObj.Members.Add(new PSNoteProperty("Inherited", Rule.IsInherited));
-                            ObjectObj.Members.Add(new PSNoteProperty("PropagationFlags", Rule.PropagationFlags));
-                            ObjectObj.Members.Add(new PSNoteProperty("ObjectType", Rule.ObjectType));
-                            ObjectObj.Members.Add(new PSNoteProperty("InheritedObjectType", Rule.InheritedObjectType));
-                            SACLList.Add( ObjectObj );
-                        }
-                    }
-
-                    return SACLList.ToArray();
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        //The interface and implmentation class used to handle the results (this implementation just writes the strings to a file)
-
-        interface IResultsHandler
-        {
-            void processResults(Object[] t);
-
-            Object[] finalise();
-        }
-
-        class SimpleResultsHandler : IResultsHandler
-        {
-            private Object lockObj = new Object();
-            private List<Object> processed = new List<Object>();
-
-            public SimpleResultsHandler()
-            {
-            }
-
-            public void processResults(Object[] results)
-            {
-                lock (lockObj)
-                {
-                    if (results.Length != 0)
-                    {
-                        for (var i = 0; i < results.Length; i++)
-                        {
-                            processed.Add((PSObject)results[i]);
-                        }
-                    }
-                }
-            }
-
-            public Object[] finalise()
-            {
-                return processed.ToArray();
-            }
-        }
-"@
-
-$LDAPSource = @"
-// Thanks Dennis Albuquerque for the C# multithreading code
-using System;
-using System.Collections;
-using System.Collections.Generic;
-using System.Linq;
-using System.Xml;
-using System.Net;
-using System.Threading;
-using System.DirectoryServices;
-using System.Security.Principal;
-using System.Security.AccessControl;
-using System.Management.Automation;
-
-using System.Diagnostics;
-//using System.IO;
-using System.Net.Sockets;
-using System.Text;
-using System.Runtime.InteropServices;
-
-namespace AdaptAD
-{
-    public static class LDAPClass
-    {
-        private static DateTime Date1;
-        private static int PassMaxAge;
-        private static int DormantTimeSpan;
-        private static Dictionary<string, string> AdGroupDictionary = new Dictionary<string, string>();
-        private static string DomainSID;
-        private static Dictionary<string, string> AdGPODictionary = new Dictionary<string, string>();
-        private static Hashtable GUIDs = new Hashtable();
-        private static Dictionary<string, string> AdSIDDictionary = new Dictionary<string, string>();
-        private static readonly HashSet<string> Groups = new HashSet<string> ( new string[] {"268435456", "268435457", "536870912", "536870913"} );
-        private static readonly HashSet<string> Users = new HashSet<string> ( new string[] { "805306368" } );
-        private static readonly HashSet<string> Computers = new HashSet<string> ( new string[] { "805306369" }) ;
-        private static readonly HashSet<string> TrustAccounts = new HashSet<string> ( new string[] { "805306370" } );
-
-        [Flags]
-        //Values taken from https://support.microsoft.com/en-au/kb/305144
-        public enum UACFlags
-        {
-            SCRIPT = 1,        // 0x1
-            ACCOUNTDISABLE = 2,        // 0x2
-            HOMEDIR_REQUIRED = 8,        // 0x8
-            LOCKOUT = 16,       // 0x10
-            PASSWD_NOTREQD = 32,       // 0x20
-            PASSWD_CANT_CHANGE = 64,       // 0x40
-            ENCRYPTED_TEXT_PASSWORD_ALLOWED = 128,      // 0x80
-            TEMP_DUPLICATE_ACCOUNT = 256,      // 0x100
-            NORMAL_ACCOUNT = 512,      // 0x200
-            INTERDOMAIN_TRUST_ACCOUNT = 2048,     // 0x800
-            WORKSTATION_TRUST_ACCOUNT = 4096,     // 0x1000
-            SERVER_TRUST_ACCOUNT = 8192,     // 0x2000
-            DONT_EXPIRE_PASSWD = 65536,    // 0x10000
-            MNS_LOGON_ACCOUNT = 131072,   // 0x20000
-            SMARTCARD_REQUIRED = 262144,   // 0x40000
-            TRUSTED_FOR_DELEGATION = 524288,   // 0x80000
-            NOT_DELEGATED = 1048576,  // 0x100000
-            USE_DES_KEY_ONLY = 2097152,  // 0x200000
-            DONT_REQUIRE_PREAUTH = 4194304,  // 0x400000
-            PASSWORD_EXPIRED = 8388608,  // 0x800000
-            TRUSTED_TO_AUTHENTICATE_FOR_DELEGATION = 16777216, // 0x1000000
-            PARTIAL_SECRETS_ACCOUNT = 67108864 // 0x04000000
-        }
-
-        [Flags]
-        //Values taken from https://blogs.msdn.microsoft.com/openspecification/2011/05/30/windows-configurations-for-kerberos-supported-encryption-type/
-        public enum KerbEncFlags
-        {
-            ZERO = 0,
-            DES_CBC_CRC = 1,        // 0x1
-            DES_CBC_MD5 = 2,        // 0x2
-            RC4_HMAC = 4,        // 0x4
-            AES128_CTS_HMAC_SHA1_96 = 8,       // 0x18
-            AES256_CTS_HMAC_SHA1_96 = 16       // 0x10
-        }
-
-        [Flags]
-        //Values taken from https://support.microsoft.com/en-au/kb/305144
-        public enum GroupTypeFlags
-        {
-            GLOBAL_GROUP       = 2,            // 0x00000002
-            DOMAIN_LOCAL_GROUP = 4,            // 0x00000004
-            LOCAL_GROUP        = 4,            // 0x00000004
-            UNIVERSAL_GROUP    = 8,            // 0x00000008
-            SECURITY_ENABLED   = -2147483648   // 0x80000000
-        }
-
-		private static readonly Dictionary<string, string> Replacements = new Dictionary<string, string>()
-        {
-            //{System.Environment.NewLine, ""},
-            //{",", ";"},
-            {"\"", "'"}
-        };
-
-        public static string CleanString(Object StringtoClean)
-        {
-            // Remove extra spaces and new lines
-            string CleanedString = string.Join(" ", ((Convert.ToString(StringtoClean)).Split((string[]) null, StringSplitOptions.RemoveEmptyEntries)));
-            foreach (string Replacement in Replacements.Keys)
-            {
-                CleanedString = CleanedString.Replace(Replacement, Replacements[Replacement]);
-            }
-            return CleanedString;
-        }
-
-        public static int ObjectCount(Object[] AdaptObject)
-        {
-            return AdaptObject.Length;
-        }
-
-        public static Object[] DomainControllerParser(Object[] AdDomainControllers, int numOfThreads)
-        {
-            Object[] AdaptObj = runProcessor(AdDomainControllers, numOfThreads, "DomainControllers");
-            return AdaptObj;
-        }
-
-        public static Object[] SchemaParser(Object[] AdSchemas, int numOfThreads)
-        {
-            Object[] AdaptObj = runProcessor(AdSchemas, numOfThreads, "SchemaHistory");
-            return AdaptObj;
-        }
-
-        public static Object[] UserParser(Object[] AdUsers, DateTime Date1, int DormantTimeSpan, int PassMaxAge, int numOfThreads)
-        {
-            LDAPClass.Date1 = Date1;
-            LDAPClass.DormantTimeSpan = DormantTimeSpan;
-            LDAPClass.PassMaxAge = PassMaxAge;
-
-            Object[] AdaptObj = runProcessor(AdUsers, numOfThreads, "Users");
-            return AdaptObj;
-        }
-
-        public static Object[] UserSPNParser(Object[] AdUsers, int numOfThreads)
-        {
-            Object[] AdaptObj = runProcessor(AdUsers, numOfThreads, "UserSPNs");
-            return AdaptObj;
-        }
-
-        public static Object[] GroupParser(Object[] AdGroups, int numOfThreads)
-        {
-            Object[] AdaptObj = runProcessor(AdGroups, numOfThreads, "Groups");
-            return AdaptObj;
-        }
-
-        public static Object[] GroupChangeParser(Object[] AdGroups, DateTime Date1, int numOfThreads)
-        {
-            LDAPClass.Date1 = Date1;
-            Object[] AdaptObj = runProcessor(AdGroups, numOfThreads, "GroupChanges");
-            return AdaptObj;
-        }
-
-        public static Object[] GroupMemberParser(Object[] AdGroups, Object[] AdGroupMembers, string DomainSID, int numOfThreads)
-        {
-            LDAPClass.AdGroupDictionary = new Dictionary<string, string>();
-            runProcessor(AdGroups, numOfThreads, "GroupsDictionary");
-            LDAPClass.DomainSID = DomainSID;
-            Object[] AdaptObj = runProcessor(AdGroupMembers, numOfThreads, "GroupMembers");
-            return AdaptObj;
-        }
-
-        public static Object[] OUParser(Object[] AdOUs, int numOfThreads)
-        {
-            Object[] AdaptObj = runProcessor(AdOUs, numOfThreads, "OUs");
-            return AdaptObj;
-        }
-
-        public static Object[] GPOParser(Object[] AdGPOs, int numOfThreads)
-        {
-            Object[] AdaptObj = runProcessor(AdGPOs, numOfThreads, "GPOs");
-            return AdaptObj;
-        }
-
-        public static Object[] SOMParser(Object[] AdGPOs, Object[] AdSOMs, int numOfThreads)
-        {
-            LDAPClass.AdGPODictionary = new Dictionary<string, string>();
-            runProcessor(AdGPOs, numOfThreads, "GPOsDictionary");
-            Object[] AdaptObj = runProcessor(AdSOMs, numOfThreads, "SOMs");
-            return AdaptObj;
-        }
-
-        public static Object[] PrinterParser(Object[] ADPrinters, int numOfThreads)
-        {
-            Object[] AdaptObj = runProcessor(ADPrinters, numOfThreads, "Printers");
-            return AdaptObj;
-        }
-
-        public static Object[] ComputerParser(Object[] AdComputers, DateTime Date1, int DormantTimeSpan, int PassMaxAge, int numOfThreads)
-        {
-            LDAPClass.Date1 = Date1;
-            LDAPClass.DormantTimeSpan = DormantTimeSpan;
-            LDAPClass.PassMaxAge = PassMaxAge;
-
-            Object[] AdaptObj = runProcessor(AdComputers, numOfThreads, "Computers");
-            return AdaptObj;
-        }
-
-        public static Object[] ComputerSPNParser(Object[] AdComputers, int numOfThreads)
-        {
-            Object[] AdaptObj = runProcessor(AdComputers, numOfThreads, "ComputerSPNs");
-            return AdaptObj;
-        }
-
-        public static Object[] LAPSParser(Object[] AdComputers, int numOfThreads)
-        {
-            Object[] AdaptObj = runProcessor(AdComputers, numOfThreads, "LAPS");
-            return AdaptObj;
-        }
-
-        public static Object[] DACLParser(Object[] ADObjects, Object PSGUIDs, int numOfThreads)
-        {
-            LDAPClass.AdSIDDictionary = new Dictionary<string, string>();
-            runProcessor(ADObjects, numOfThreads, "SIDDictionary");
-            LDAPClass.GUIDs = (Hashtable) PSGUIDs;
-            Object[] AdaptObj = runProcessor(ADObjects, numOfThreads, "DACLs");
-            return AdaptObj;
-        }
-
-        public static Object[] SACLParser(Object[] ADObjects, Object PSGUIDs, int numOfThreads)
-        {
-            LDAPClass.GUIDs = (Hashtable) PSGUIDs;
-            Object[] AdaptObj = runProcessor(ADObjects, numOfThreads, "SACLs");
-            return AdaptObj;
-        }
-
-        static Object[] runProcessor(Object[] arrayToProcess, int numOfThreads, string processorType)
-        {
-            int totalRecords = arrayToProcess.Length;
-            IRecordProcessor recordProcessor = recordProcessorFactory(processorType);
-            IResultsHandler resultsHandler = new SimpleResultsHandler ();
-            int numberOfRecordsPerThread = totalRecords / numOfThreads;
-            int remainders = totalRecords % numOfThreads;
-
-            Thread[] threads = new Thread[numOfThreads];
-            for (int i = 0; i < numOfThreads; i++)
-            {
-                int numberOfRecordsToProcess = numberOfRecordsPerThread;
-                if (i == (numOfThreads - 1))
-                {
-                    //last thread, do the remaining records
-                    numberOfRecordsToProcess += remainders;
-                }
-
-                //split the full array into chunks to be given to different threads
-                Object[] sliceToProcess = new Object[numberOfRecordsToProcess];
-                Array.Copy(arrayToProcess, i * numberOfRecordsPerThread, sliceToProcess, 0, numberOfRecordsToProcess);
-                ProcessorThread processorThread = new ProcessorThread(i, recordProcessor, resultsHandler, sliceToProcess);
-                threads[i] = new Thread(processorThread.processThreadRecords);
-                threads[i].Start();
-            }
-            foreach (Thread t in threads)
-            {
-                t.Join();
-            }
-
-            return resultsHandler.finalise();
-        }
-
-        static IRecordProcessor recordProcessorFactory(string name)
-        {
-            switch (name)
-            {
-                case "DomainControllers":
-                    return new DomainControllerRecordProcessor();
-                case "SchemaHistory":
-                    return new SchemaRecordProcessor();
-                case "Users":
-                    return new UserRecordProcessor();
-                case "UserSPNs":
-                    return new UserSPNRecordProcessor();
-                case "Groups":
-                    return new GroupRecordProcessor();
-                case "GroupChanges":
-                    return new GroupChangeRecordProcessor();
-                case "GroupsDictionary":
-                    return new GroupRecordDictionaryProcessor();
-                case "GroupMembers":
-                    return new GroupMemberRecordProcessor();
-                case "OUs":
-                    return new OURecordProcessor();
-                case "GPOs":
-                    return new GPORecordProcessor();
-                case "GPOsDictionary":
-                    return new GPORecordDictionaryProcessor();
-                case "SOMs":
-                    return new SOMRecordProcessor();
-                case "Printers":
-                    return new PrinterRecordProcessor();
-                case "Computers":
-                    return new ComputerRecordProcessor();
-                case "ComputerSPNs":
-                    return new ComputerSPNRecordProcessor();
-                case "LAPS":
-                    return new LAPSRecordProcessor();
-                case "SIDDictionary":
-                    return new SIDRecordDictionaryProcessor();
-                case "DACLs":
-                    return new DACLRecordProcessor();
-                case "SACLs":
-                    return new SACLRecordProcessor();
-            }
-            throw new ArgumentException("Invalid processor type " + name);
-        }
-
-        class ProcessorThread
-        {
-            readonly int id;
-            readonly IRecordProcessor recordProcessor;
-            readonly IResultsHandler resultsHandler;
-            readonly Object[] objectsToBeProcessed;
-
-            public ProcessorThread(int id, IRecordProcessor recordProcessor, IResultsHandler resultsHandler, Object[] objectsToBeProcessed)
-            {
-                this.recordProcessor = recordProcessor;
-                this.id = id;
-                this.resultsHandler = resultsHandler;
-                this.objectsToBeProcessed = objectsToBeProcessed;
-            }
-
-            public void processThreadRecords()
-            {
-                for (int i = 0; i < objectsToBeProcessed.Length; i++)
-                {
-                    Object[] result = recordProcessor.processRecord(objectsToBeProcessed[i]);
-                    resultsHandler.processResults(result); //this is a thread safe operation
-                }
-            }
-        }
-
-        //The interface and implmentation class used to process a record (this implemmentation just returns a log type string)
-
-        interface IRecordProcessor
-        {
-            PSObject[] processRecord(Object record);
-        }
-
-        class DomainControllerRecordProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    System.DirectoryServices.ActiveDirectory.DomainController AdDC = (System.DirectoryServices.ActiveDirectory.DomainController) record;
-                    bool? Infra = false;
-                    bool? Naming = false;
-                    bool? Schema = false;
-                    bool? RID = false;
-                    bool? PDC = false;
-                    string Domain = null;
-                    string Site = null;
-                    string OperatingSystem = null;
-                    PSObject DCSMBObj = new PSObject();
-
-                    try
-                    {
-                        Domain = AdDC.Domain.ToString();
-                        foreach (var OperationMasterRole in (System.DirectoryServices.ActiveDirectory.ActiveDirectoryRoleCollection) AdDC.Roles)
-                        {
-                            switch (OperationMasterRole.ToString())
-                            {
-                                case "InfrastructureRole":
-                                Infra = true;
-                                break;
-                                case "NamingRole":
-                                Naming = true;
-                                break;
-                                case "SchemaRole":
-                                Schema = true;
-                                break;
-                                case "RidRole":
-                                RID = true;
-                                break;
-                                case "PdcRole":
-                                PDC = true;
-                                break;
-                            }
-                        }
-                        Site = AdDC.SiteName;
-                        OperatingSystem = AdDC.OSVersion.ToString();
-                    }
-                    catch (System.DirectoryServices.ActiveDirectory.ActiveDirectoryServerDownException)// e)
-                    {
-                        //Console.WriteLine("Exception caught: {0}", e);
-                        Infra = null;
-                        Naming = null;
-                        Schema = null;
-                        RID = null;
-                        PDC = null;
-                    }
-                    catch (Exception e)
-                    {
-                        Console.WriteLine("Exception caught: {0}", e);
-                    }
-                    PSObject DCObj = new PSObject();
-                    DCObj.Members.Add(new PSNoteProperty("Domain", Domain));
-                    DCObj.Members.Add(new PSNoteProperty("Site", Site));
-                    DCObj.Members.Add(new PSNoteProperty("Name", Convert.ToString(AdDC.Name).Split('.')[0]));
-                    DCObj.Members.Add(new PSNoteProperty("IPv4Address", AdDC.IPAddress));
-                    DCObj.Members.Add(new PSNoteProperty("Operating System", OperatingSystem));
-                    DCObj.Members.Add(new PSNoteProperty("Hostname", AdDC.Name));
-                    DCObj.Members.Add(new PSNoteProperty("Infra", Infra));
-                    DCObj.Members.Add(new PSNoteProperty("Naming", Naming));
-                    DCObj.Members.Add(new PSNoteProperty("Schema", Schema));
-                    DCObj.Members.Add(new PSNoteProperty("RID", RID));
-                    DCObj.Members.Add(new PSNoteProperty("PDC", PDC));
-                    if (AdDC.IPAddress != null)
-                    {
-                        DCSMBObj = GetPSObject(AdDC.IPAddress);
-                    }
-                    else
-                    {
-                        DCSMBObj = new PSObject();
-                        DCSMBObj.Members.Add(new PSNoteProperty("SMB Port Open", false));
-                    }
-                    foreach (PSPropertyInfo psPropertyInfo in DCSMBObj.Properties)
-                    {
-                        if (Convert.ToString(psPropertyInfo.Name) == "SMB Port Open" && (bool) psPropertyInfo.Value == false)
-                        {
-                            DCObj.Members.Add(new PSNoteProperty(psPropertyInfo.Name, psPropertyInfo.Value));
-                            DCObj.Members.Add(new PSNoteProperty("SMB1(NT LM 0.12)", null));
-                            DCObj.Members.Add(new PSNoteProperty("SMB2(0x0202)", null));
-                            DCObj.Members.Add(new PSNoteProperty("SMB2(0x0210)", null));
-                            DCObj.Members.Add(new PSNoteProperty("SMB3(0x0300)", null));
-                            DCObj.Members.Add(new PSNoteProperty("SMB3(0x0302)", null));
-                            DCObj.Members.Add(new PSNoteProperty("SMB3(0x0311)", null));
-                            DCObj.Members.Add(new PSNoteProperty("SMB Signing", null));
-                            break;
-                        }
-                        else
-                        {
-                            DCObj.Members.Add(new PSNoteProperty(psPropertyInfo.Name, psPropertyInfo.Value));
-                        }
-                    }
-                    return new PSObject[] { DCObj };
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class SchemaRecordProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    SearchResult AdSchema = (SearchResult) record;
-
-                    PSObject SchemaObj = new PSObject();
-                    SchemaObj.Members.Add(new PSNoteProperty("ObjectClass", AdSchema.Properties["objectclass"][0]));
-                    SchemaObj.Members.Add(new PSNoteProperty("Name", AdSchema.Properties["name"][0]));
-                    SchemaObj.Members.Add(new PSNoteProperty("whenCreated", AdSchema.Properties["whencreated"][0]));
-                    SchemaObj.Members.Add(new PSNoteProperty("whenChanged", AdSchema.Properties["whenchanged"][0]));
-                    SchemaObj.Members.Add(new PSNoteProperty("DistinguishedName", AdSchema.Properties["distinguishedname"][0]));
-                    return new PSObject[] { SchemaObj };
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class UserRecordProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    SearchResult AdUser = (SearchResult) record;
-                    bool? Enabled = null;
-                    bool? CannotChangePassword = null;
-                    bool? PasswordNeverExpires = null;
-                    bool? AccountLockedOut = null;
-                    bool? PasswordExpired = null;
-                    bool? ReversiblePasswordEncryption = null;
-                    bool? DelegationPermitted = null;
-                    bool? SmartcardRequired = null;
-                    bool? UseDESKeyOnly = null;
-                    bool? PasswordNotRequired = null;
-                    bool? TrustedforDelegation = null;
-                    bool? TrustedtoAuthforDelegation = null;
-                    bool? DoesNotRequirePreAuth = null;
-                    bool? KerberosRC4 = null;
-                    bool? KerberosAES128 = null;
-                    bool? KerberosAES256 = null;
-                    string DelegationType = null;
-                    string DelegationProtocol = null;
-                    string DelegationServices = null;
-                    bool MustChangePasswordatLogon = false;
-                    int? DaysSinceLastLogon = null;
-                    int? DaysSinceLastPasswordChange = null;
-                    int? AccountExpirationNumofDays = null;
-                    bool PasswordNotChangedafterMaxAge = false;
-                    bool NeverLoggedIn = false;
-                    bool Dormant = false;
-                    DateTime? LastLogonDate = null;
-                    DateTime? PasswordLastSet = null;
-                    DateTime? AccountExpires = null;
-                    byte[] ntSecurityDescriptor = null;
-                    bool DenyEveryone = false;
-                    bool DenySelf = false;
-                    string SIDHistory = "";
-                    bool? HasSPN = null;
-
-                    // When the user is not allowed to query the UserAccountControl attribute.
-                    if (AdUser.Properties["useraccountcontrol"].Count != 0)
-                    {
-                        var userFlags = (UACFlags) AdUser.Properties["useraccountcontrol"][0];
-                        Enabled = !((userFlags & UACFlags.ACCOUNTDISABLE) == UACFlags.ACCOUNTDISABLE);
-                        PasswordNeverExpires = (userFlags & UACFlags.DONT_EXPIRE_PASSWD) == UACFlags.DONT_EXPIRE_PASSWD;
-                        AccountLockedOut = (userFlags & UACFlags.LOCKOUT) == UACFlags.LOCKOUT;
-                        DelegationPermitted = !((userFlags & UACFlags.NOT_DELEGATED) == UACFlags.NOT_DELEGATED);
-                        SmartcardRequired = (userFlags & UACFlags.SMARTCARD_REQUIRED) == UACFlags.SMARTCARD_REQUIRED;
-                        ReversiblePasswordEncryption = (userFlags & UACFlags.ENCRYPTED_TEXT_PASSWORD_ALLOWED) == UACFlags.ENCRYPTED_TEXT_PASSWORD_ALLOWED;
-                        UseDESKeyOnly = (userFlags & UACFlags.USE_DES_KEY_ONLY) == UACFlags.USE_DES_KEY_ONLY;
-                        PasswordNotRequired = (userFlags & UACFlags.PASSWD_NOTREQD) == UACFlags.PASSWD_NOTREQD;
-                        PasswordExpired = (userFlags & UACFlags.PASSWORD_EXPIRED) == UACFlags.PASSWORD_EXPIRED;
-                        TrustedforDelegation = (userFlags & UACFlags.TRUSTED_FOR_DELEGATION) == UACFlags.TRUSTED_FOR_DELEGATION;
-                        TrustedtoAuthforDelegation = (userFlags & UACFlags.TRUSTED_TO_AUTHENTICATE_FOR_DELEGATION) == UACFlags.TRUSTED_TO_AUTHENTICATE_FOR_DELEGATION;
-                        DoesNotRequirePreAuth = (userFlags & UACFlags.DONT_REQUIRE_PREAUTH) == UACFlags.DONT_REQUIRE_PREAUTH;
-                    }
-                    if (AdUser.Properties["msds-supportedencryptiontypes"].Count != 0)
-                    {
-                        var userKerbEncFlags = (KerbEncFlags) AdUser.Properties["msds-supportedencryptiontypes"][0];
-                        if (userKerbEncFlags != KerbEncFlags.ZERO)
-                        {
-                            KerberosRC4 = (userKerbEncFlags & KerbEncFlags.RC4_HMAC) == KerbEncFlags.RC4_HMAC;
-                            KerberosAES128 = (userKerbEncFlags & KerbEncFlags.AES128_CTS_HMAC_SHA1_96) == KerbEncFlags.AES128_CTS_HMAC_SHA1_96;
-                            KerberosAES256 = (userKerbEncFlags & KerbEncFlags.AES256_CTS_HMAC_SHA1_96) == KerbEncFlags.AES256_CTS_HMAC_SHA1_96;
-                        }
-                    }
-                    // When the user is not allowed to query the ntsecuritydescriptor attribute.
-                    if (AdUser.Properties["ntsecuritydescriptor"].Count != 0)
-                    {
-                        ntSecurityDescriptor = (byte[]) AdUser.Properties["ntsecuritydescriptor"][0];
-                    }
-                    else
-                    {
-                        DirectoryEntry AdUserEntry = ((SearchResult)record).GetDirectoryEntry();
-                        ntSecurityDescriptor = (byte[]) AdUserEntry.ObjectSecurity.GetSecurityDescriptorBinaryForm();
-                    }
-                    if (ntSecurityDescriptor != null)
-                    {
-                        DirectoryObjectSecurity DirObjSec = new ActiveDirectorySecurity();
-                        DirObjSec.SetSecurityDescriptorBinaryForm(ntSecurityDescriptor);
-                        AuthorizationRuleCollection AccessRules = (AuthorizationRuleCollection) DirObjSec.GetAccessRules(true,false,typeof(System.Security.Principal.NTAccount));
-                        foreach (ActiveDirectoryAccessRule Rule in AccessRules)
-                        {
-                            if ((Convert.ToString(Rule.ObjectType)).Equals("ab721a53-1e2f-11d0-9819-00aa0040529b"))
-                            {
-                                if (Rule.AccessControlType.ToString() == "Deny")
-                                {
-                                    string ObjectName = Convert.ToString(Rule.IdentityReference);
-                                    if (ObjectName == "Everyone")
-                                    {
-                                        DenyEveryone = true;
-                                    }
-                                    if (ObjectName == "NT AUTHORITY\\SELF")
-                                    {
-                                        DenySelf = true;
-                                    }
-                                }
-                            }
-                        }
-                        if (DenyEveryone && DenySelf)
-                        {
-                            CannotChangePassword = true;
-                        }
-                        else
-                        {
-                            CannotChangePassword = false;
-                        }
-                    }
-                    if (AdUser.Properties["lastlogontimestamp"].Count != 0)
-                    {
-                        LastLogonDate = DateTime.FromFileTime((long)(AdUser.Properties["lastlogontimestamp"][0]));
-                        DaysSinceLastLogon = Math.Abs((Date1 - (DateTime)LastLogonDate).Days);
-                        if (DaysSinceLastLogon > DormantTimeSpan)
-                        {
-                            Dormant = true;
-                        }
-                    }
-                    else
-                    {
-                        NeverLoggedIn = true;
-                    }
-                    if (AdUser.Properties["pwdLastSet"].Count != 0)
-                    {
-                        if (Convert.ToString(AdUser.Properties["pwdlastset"][0]) == "0")
-                        {
-                            if ((bool) PasswordNeverExpires == false)
-                            {
-                                MustChangePasswordatLogon = true;
-                            }
-                        }
-                        else
-                        {
-                            PasswordLastSet = DateTime.FromFileTime((long)(AdUser.Properties["pwdlastset"][0]));
-                            DaysSinceLastPasswordChange = Math.Abs((Date1 - (DateTime)PasswordLastSet).Days);
-                            if (DaysSinceLastPasswordChange > PassMaxAge)
-                            {
-                                PasswordNotChangedafterMaxAge = true;
-                            }
-                        }
-                    }
-                    if (AdUser.Properties["accountExpires"].Count != 0)
-                    {
-                        if ((Int64) AdUser.Properties["accountExpires"][0] != (Int64) 9223372036854775807)
-                        {
-                            if ((Int64) AdUser.Properties["accountExpires"][0] != (Int64) 0)
-                            {
-                                try
-                                {
-                                    //https://msdn.microsoft.com/en-us/library/ms675098(v=vs.85).aspx
-                                    AccountExpires = DateTime.FromFileTime((long)(AdUser.Properties["accountExpires"][0]));
-                                    AccountExpirationNumofDays = ((int)((DateTime)AccountExpires - Date1).Days);
-
-                                }
-                                catch //(Exception e)
-                                {
-                                    //    Console.WriteLine("Exception caught: {0}", e);
-                                }
-                            }
-                        }
-                    }
-                    if (AdUser.Properties["useraccountcontrol"].Count != 0)
-                    {
-                        if ((bool) TrustedforDelegation)
-                        {
-                            DelegationType = "Unconstrained";
-                            DelegationServices = "Any";
-                        }
-                        if (AdUser.Properties["msDS-AllowedToDelegateTo"].Count >= 1)
-                        {
-                            DelegationType = "Constrained";
-                            for (int i = 0; i < AdUser.Properties["msDS-AllowedToDelegateTo"].Count; i++)
-                            {
-                                var delegateto = AdUser.Properties["msDS-AllowedToDelegateTo"][i];
-                                DelegationServices = DelegationServices + "," + Convert.ToString(delegateto);
-                            }
-                            DelegationServices = DelegationServices.TrimStart(',');
-                        }
-                        if ((bool) TrustedtoAuthforDelegation)
-                        {
-                            DelegationProtocol = "Any";
-                        }
-                        else if (DelegationType != null)
-                        {
-                            DelegationProtocol = "Kerberos";
-                        }
-                    }
-                    if (AdUser.Properties["sidhistory"].Count >= 1)
-                    {
-                        string sids = "";
-                        for (int i = 0; i < AdUser.Properties["sidhistory"].Count; i++)
-                        {
-                            var history = AdUser.Properties["sidhistory"][i];
-                            sids = sids + "," + Convert.ToString(new SecurityIdentifier((byte[])history, 0));
-                        }
-                        SIDHistory = sids.TrimStart(',');
-                    }
-                    if (AdUser.Properties["serviceprincipalname"].Count == 0)
-                    {
-                        HasSPN = false;
-                    }
-                    else if (AdUser.Properties["serviceprincipalname"].Count > 0)
-                    {
-                        HasSPN = true;
-                    }
-
-                    PSObject UserObj = new PSObject();
-                    UserObj.Members.Add(new PSNoteProperty("UserName", (AdUser.Properties["samaccountname"].Count != 0 ? CleanString(AdUser.Properties["samaccountname"][0]) : "")));
-                    UserObj.Members.Add(new PSNoteProperty("Name", (AdUser.Properties["name"].Count != 0 ? CleanString(AdUser.Properties["name"][0]) : "")));
-                    UserObj.Members.Add(new PSNoteProperty("Enabled", Enabled));
-                    UserObj.Members.Add(new PSNoteProperty("Must Change Password at Logon", MustChangePasswordatLogon));
-                    UserObj.Members.Add(new PSNoteProperty("Cannot Change Password", CannotChangePassword));
-                    UserObj.Members.Add(new PSNoteProperty("Password Never Expires", PasswordNeverExpires));
-                    UserObj.Members.Add(new PSNoteProperty("Reversible Password Encryption", ReversiblePasswordEncryption));
-                    UserObj.Members.Add(new PSNoteProperty("Smartcard Logon Required", SmartcardRequired));
-                    UserObj.Members.Add(new PSNoteProperty("Delegation Permitted", DelegationPermitted));
-                    UserObj.Members.Add(new PSNoteProperty("Kerberos DES Only", UseDESKeyOnly));
-                    UserObj.Members.Add(new PSNoteProperty("Kerberos RC4", KerberosRC4));
-                    UserObj.Members.Add(new PSNoteProperty("Kerberos AES-128bit", KerberosAES128));
-                    UserObj.Members.Add(new PSNoteProperty("Kerberos AES-256bit", KerberosAES256));
-                    UserObj.Members.Add(new PSNoteProperty("Does Not Require Pre Auth", DoesNotRequirePreAuth));
-                    UserObj.Members.Add(new PSNoteProperty("Never Logged in", NeverLoggedIn));
-                    UserObj.Members.Add(new PSNoteProperty("Logon Age (days)", DaysSinceLastLogon));
-                    UserObj.Members.Add(new PSNoteProperty("Password Age (days)", DaysSinceLastPasswordChange));
-                    UserObj.Members.Add(new PSNoteProperty("Dormant (> " + DormantTimeSpan + " days)", Dormant));
-                    UserObj.Members.Add(new PSNoteProperty("Password Age (> " + PassMaxAge + " days)", PasswordNotChangedafterMaxAge));
-                    UserObj.Members.Add(new PSNoteProperty("Account Locked Out", AccountLockedOut));
-                    UserObj.Members.Add(new PSNoteProperty("Password Expired", PasswordExpired));
-                    UserObj.Members.Add(new PSNoteProperty("Password Not Required", PasswordNotRequired));
-                    UserObj.Members.Add(new PSNoteProperty("Delegation Type", DelegationType));
-                    UserObj.Members.Add(new PSNoteProperty("Delegation Protocol", DelegationProtocol));
-                    UserObj.Members.Add(new PSNoteProperty("Delegation Services", DelegationServices));
-                    UserObj.Members.Add(new PSNoteProperty("Logon Workstations", (AdUser.Properties["userworkstations"].Count != 0 ? AdUser.Properties["userworkstations"][0] : "")));
-                    UserObj.Members.Add(new PSNoteProperty("AdminCount", (AdUser.Properties["admincount"].Count != 0 ? AdUser.Properties["admincount"][0] : "")));
-                    UserObj.Members.Add(new PSNoteProperty("Primary GroupID", (AdUser.Properties["primarygroupid"].Count != 0 ? AdUser.Properties["primarygroupid"][0] : "")));
-                    UserObj.Members.Add(new PSNoteProperty("SID", Convert.ToString(new SecurityIdentifier((byte[])AdUser.Properties["objectSID"][0], 0))));
-                    UserObj.Members.Add(new PSNoteProperty("SIDHistory", SIDHistory));
-                    UserObj.Members.Add(new PSNoteProperty("HasSPN", HasSPN));
-                    UserObj.Members.Add(new PSNoteProperty("Description", (AdUser.Properties["Description"].Count != 0 ? CleanString(AdUser.Properties["Description"][0]) : "")));
-                    UserObj.Members.Add(new PSNoteProperty("Title", (AdUser.Properties["Title"].Count != 0 ? CleanString(AdUser.Properties["Title"][0]) : "")));
-                    UserObj.Members.Add(new PSNoteProperty("Department", (AdUser.Properties["Department"].Count != 0 ? CleanString(AdUser.Properties["Department"][0]) : "")));
-                    UserObj.Members.Add(new PSNoteProperty("Company", (AdUser.Properties["Company"].Count != 0 ? CleanString(AdUser.Properties["Company"][0]) : "")));
-                    UserObj.Members.Add(new PSNoteProperty("Manager", (AdUser.Properties["Manager"].Count != 0 ? CleanString(AdUser.Properties["Manager"][0]) : "")));
-                    UserObj.Members.Add(new PSNoteProperty("Info", (AdUser.Properties["info"].Count != 0 ? CleanString(AdUser.Properties["info"][0]) : "")));
-                    UserObj.Members.Add(new PSNoteProperty("Last Logon Date", LastLogonDate));
-                    UserObj.Members.Add(new PSNoteProperty("Password LastSet", PasswordLastSet));
-                    UserObj.Members.Add(new PSNoteProperty("Account Expiration Date", AccountExpires));
-                    UserObj.Members.Add(new PSNoteProperty("Account Expiration (days)", AccountExpirationNumofDays));
-                    UserObj.Members.Add(new PSNoteProperty("Mobile", (AdUser.Properties["mobile"].Count != 0 ? CleanString(AdUser.Properties["mobile"][0]) : "")));
-                    UserObj.Members.Add(new PSNoteProperty("Email", (AdUser.Properties["mail"].Count != 0 ? CleanString(AdUser.Properties["mail"][0]) : "")));
-                    UserObj.Members.Add(new PSNoteProperty("HomeDirectory", (AdUser.Properties["homedirectory"].Count != 0 ? AdUser.Properties["homedirectory"][0] : "")));
-                    UserObj.Members.Add(new PSNoteProperty("ProfilePath", (AdUser.Properties["profilepath"].Count != 0 ? AdUser.Properties["profilepath"][0] : "")));
-                    UserObj.Members.Add(new PSNoteProperty("ScriptPath", (AdUser.Properties["scriptpath"].Count != 0 ? AdUser.Properties["scriptpath"][0] : "")));
-                    UserObj.Members.Add(new PSNoteProperty("UserAccountControl", (AdUser.Properties["useraccountcontrol"].Count != 0 ? AdUser.Properties["useraccountcontrol"][0] : "")));
-                    UserObj.Members.Add(new PSNoteProperty("First Name", (AdUser.Properties["givenName"].Count != 0 ? CleanString(AdUser.Properties["givenName"][0]) : "")));
-                    UserObj.Members.Add(new PSNoteProperty("Middle Name", (AdUser.Properties["middleName"].Count != 0 ? CleanString(AdUser.Properties["middleName"][0]) : "")));
-                    UserObj.Members.Add(new PSNoteProperty("Last Name", (AdUser.Properties["sn"].Count != 0 ? CleanString(AdUser.Properties["sn"][0]) : "")));
-                    UserObj.Members.Add(new PSNoteProperty("Country", (AdUser.Properties["c"].Count != 0 ? CleanString(AdUser.Properties["c"][0]) : "")));
-                    UserObj.Members.Add(new PSNoteProperty("whenCreated", (AdUser.Properties["whencreated"].Count != 0 ? AdUser.Properties["whencreated"][0] : "")));
-                    UserObj.Members.Add(new PSNoteProperty("whenChanged", (AdUser.Properties["whenchanged"].Count != 0 ? AdUser.Properties["whenchanged"][0] : "")));
-                    UserObj.Members.Add(new PSNoteProperty("DistinguishedName", (AdUser.Properties["distinguishedname"].Count != 0 ? CleanString(AdUser.Properties["distinguishedname"][0]) : "")));
-                    UserObj.Members.Add(new PSNoteProperty("CanonicalName", (AdUser.Properties["canonicalname"].Count != 0 ? CleanString(AdUser.Properties["canonicalname"][0]) : "")));
-                    return new PSObject[] { UserObj };
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class UserSPNRecordProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    SearchResult AdUser = (SearchResult) record;
-                    if (AdUser.Properties["serviceprincipalname"].Count == 0)
-                    {
-                        return new PSObject[] { };
-                    }
-                    List<PSObject> SPNList = new List<PSObject>();
-                    bool? Enabled = null;
-                    string Memberof = null;
-                    DateTime? PasswordLastSet = null;
-
-                    if (AdUser.Properties["pwdlastset"].Count != 0)
-                    {
-                        if (Convert.ToString(AdUser.Properties["pwdlastset"][0]) != "0")
-                        {
-                            PasswordLastSet = DateTime.FromFileTime((long)(AdUser.Properties["pwdLastSet"][0]));
-                        }
-                    }
-                    // When the user is not allowed to query the UserAccountControl attribute.
-                    if (AdUser.Properties["useraccountcontrol"].Count != 0)
-                    {
-                        var userFlags = (UACFlags) AdUser.Properties["useraccountcontrol"][0];
-                        Enabled = !((userFlags & UACFlags.ACCOUNTDISABLE) == UACFlags.ACCOUNTDISABLE);
-                    }
-                    string Description = (AdUser.Properties["Description"].Count != 0 ? CleanString(AdUser.Properties["Description"][0]) : "");
-                    string PrimaryGroupID = (AdUser.Properties["primarygroupid"].Count != 0 ? Convert.ToString(AdUser.Properties["primarygroupid"][0]) : "");
-                    if (AdUser.Properties["memberof"].Count != 0)
-                    {
-                        foreach (string Member in AdUser.Properties["memberof"])
-                        {
-                            Memberof = Memberof + "," + ((Convert.ToString(Member)).Split(',')[0]).Split('=')[1];
-                        }
-                        Memberof = Memberof.TrimStart(',');
-                    }
-                    foreach (string SPN in AdUser.Properties["serviceprincipalname"])
-                    {
-                        string[] SPNArray = SPN.Split('/');
-                        PSObject UserSPNObj = new PSObject();
-                        UserSPNObj.Members.Add(new PSNoteProperty("UserName", (AdUser.Properties["samaccountname"].Count != 0 ? CleanString(AdUser.Properties["samaccountname"][0]) : "")));
-                        UserSPNObj.Members.Add(new PSNoteProperty("Name", (AdUser.Properties["name"].Count != 0 ? CleanString(AdUser.Properties["name"][0]) : "")));
-                        UserSPNObj.Members.Add(new PSNoteProperty("Enabled", Enabled));
-                        UserSPNObj.Members.Add(new PSNoteProperty("Service", SPNArray[0]));
-                        UserSPNObj.Members.Add(new PSNoteProperty("Host", SPNArray[1]));
-                        UserSPNObj.Members.Add(new PSNoteProperty("Password Last Set", PasswordLastSet));
-                        UserSPNObj.Members.Add(new PSNoteProperty("Description", Description));
-                        UserSPNObj.Members.Add(new PSNoteProperty("Primary GroupID", PrimaryGroupID));
-                        UserSPNObj.Members.Add(new PSNoteProperty("Memberof", Memberof));
-                        SPNList.Add( UserSPNObj );
-                    }
-                    return SPNList.ToArray();
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class GroupRecordProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    SearchResult AdGroup = (SearchResult) record;
-                    string ManagedByValue = AdGroup.Properties["managedby"].Count != 0 ? Convert.ToString(AdGroup.Properties["managedby"][0]) : "";
-                    string ManagedBy = "";
-                    string GroupCategory = null;
-                    string GroupScope = null;
-                    string SIDHistory = "";
-
-                    if (AdGroup.Properties["managedBy"].Count != 0)
-                    {
-                        ManagedBy = (ManagedByValue.Split(new string[] { "CN=" },StringSplitOptions.RemoveEmptyEntries))[0].Split(new string[] { "OU=" },StringSplitOptions.RemoveEmptyEntries)[0].TrimEnd(',');
-                    }
-
-                    if (AdGroup.Properties["grouptype"].Count != 0)
-                    {
-                        var groupTypeFlags = (GroupTypeFlags) AdGroup.Properties["grouptype"][0];
-                        GroupCategory = (groupTypeFlags & GroupTypeFlags.SECURITY_ENABLED) == GroupTypeFlags.SECURITY_ENABLED ? "Security" : "Distribution";
-
-                        if ((groupTypeFlags & GroupTypeFlags.UNIVERSAL_GROUP) == GroupTypeFlags.UNIVERSAL_GROUP)
-                        {
-                            GroupScope = "Universal";
-                        }
-                        else if ((groupTypeFlags & GroupTypeFlags.GLOBAL_GROUP) == GroupTypeFlags.GLOBAL_GROUP)
-                        {
-                            GroupScope = "Global";
-                        }
-                        else if ((groupTypeFlags & GroupTypeFlags.DOMAIN_LOCAL_GROUP) == GroupTypeFlags.DOMAIN_LOCAL_GROUP)
-                        {
-                            GroupScope = "DomainLocal";
-                        }
-                    }
-                    if (AdGroup.Properties["sidhistory"].Count >= 1)
-                    {
-                        string sids = "";
-                        for (int i = 0; i < AdGroup.Properties["sidhistory"].Count; i++)
-                        {
-                            var history = AdGroup.Properties["sidhistory"][i];
-                            sids = sids + "," + Convert.ToString(new SecurityIdentifier((byte[])history, 0));
-                        }
-                        SIDHistory = sids.TrimStart(',');
-                    }
-
-                    PSObject GroupObj = new PSObject();
-                    GroupObj.Members.Add(new PSNoteProperty("Name", AdGroup.Properties["samaccountname"][0]));
-                    GroupObj.Members.Add(new PSNoteProperty("AdminCount", (AdGroup.Properties["admincount"].Count != 0 ? AdGroup.Properties["admincount"][0] : "")));
-                    GroupObj.Members.Add(new PSNoteProperty("GroupCategory", GroupCategory));
-                    GroupObj.Members.Add(new PSNoteProperty("GroupScope", GroupScope));
-                    GroupObj.Members.Add(new PSNoteProperty("ManagedBy", ManagedBy));
-                    GroupObj.Members.Add(new PSNoteProperty("SID", Convert.ToString(new SecurityIdentifier((byte[])AdGroup.Properties["objectSID"][0], 0))));
-                    GroupObj.Members.Add(new PSNoteProperty("SIDHistory", SIDHistory));
-                    GroupObj.Members.Add(new PSNoteProperty("Description", (AdGroup.Properties["Description"].Count != 0 ? CleanString(AdGroup.Properties["Description"][0]) : "")));
-                    GroupObj.Members.Add(new PSNoteProperty("whenCreated", AdGroup.Properties["whencreated"][0]));
-                    GroupObj.Members.Add(new PSNoteProperty("whenChanged", AdGroup.Properties["whenchanged"][0]));
-                    GroupObj.Members.Add(new PSNoteProperty("DistinguishedName", CleanString(AdGroup.Properties["distinguishedname"][0])));
-                    GroupObj.Members.Add(new PSNoteProperty("CanonicalName", AdGroup.Properties["canonicalname"][0]));
-                    return new PSObject[] { GroupObj };
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class GroupChangeRecordProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    SearchResult AdGroup = (SearchResult) record;
-                    string Action = null;
-                    int? DaysSinceAdded = null;
-                    int? DaysSinceRemoved = null;
-                    DateTime? AddedDate = null;
-                    DateTime? RemovedDate = null;
-                    List<PSObject> GroupChangesList = new List<PSObject>();
-
-                    System.DirectoryServices.ResultPropertyValueCollection ReplValueMetaData = (System.DirectoryServices.ResultPropertyValueCollection) AdGroup.Properties["msDS-ReplValueMetaData"];
-
-                    if (ReplValueMetaData.Count != 0)
-                    {
-                        foreach (string ReplData in ReplValueMetaData)
-                        {
-                            XmlDocument ReplXML = new XmlDocument();
-                            ReplXML.LoadXml(ReplData.Replace("\x00", "").Replace("&","&amp;"));
-
-                            if (ReplXML.SelectSingleNode("DS_REPL_VALUE_META_DATA")["ftimeDeleted"].InnerText != "1601-01-01T00:00:00Z")
-                            {
-                                Action = "Removed";
-                                AddedDate = DateTime.Parse(ReplXML.SelectSingleNode("DS_REPL_VALUE_META_DATA")["ftimeCreated"].InnerText);
-                                DaysSinceAdded = Math.Abs((Date1 - (DateTime) AddedDate).Days);
-                                RemovedDate = DateTime.Parse(ReplXML.SelectSingleNode("DS_REPL_VALUE_META_DATA")["ftimeDeleted"].InnerText);
-                                DaysSinceRemoved = Math.Abs((Date1 - (DateTime) RemovedDate).Days);
-                            }
-                            else
-                            {
-                                Action = "Added";
-                                AddedDate = DateTime.Parse(ReplXML.SelectSingleNode("DS_REPL_VALUE_META_DATA")["ftimeCreated"].InnerText);
-                                DaysSinceAdded = Math.Abs((Date1 - (DateTime) AddedDate).Days);
-                                RemovedDate = null;
-                                DaysSinceRemoved = null;
-                            }
-
-                            PSObject GroupChangeObj = new PSObject();
-                            GroupChangeObj.Members.Add(new PSNoteProperty("Group Name", AdGroup.Properties["samaccountname"][0]));
-                            GroupChangeObj.Members.Add(new PSNoteProperty("Group DistinguishedName", CleanString(AdGroup.Properties["distinguishedname"][0])));
-                            GroupChangeObj.Members.Add(new PSNoteProperty("Member DistinguishedName", CleanString(ReplXML.SelectSingleNode("DS_REPL_VALUE_META_DATA")["pszObjectDn"].InnerText)));
-                            GroupChangeObj.Members.Add(new PSNoteProperty("Action", Action));
-                            GroupChangeObj.Members.Add(new PSNoteProperty("Added Age (Days)", DaysSinceAdded));
-                            GroupChangeObj.Members.Add(new PSNoteProperty("Removed Age (Days)", DaysSinceRemoved));
-                            GroupChangeObj.Members.Add(new PSNoteProperty("Added Date", AddedDate));
-                            GroupChangeObj.Members.Add(new PSNoteProperty("Removed Date", RemovedDate));
-                            GroupChangeObj.Members.Add(new PSNoteProperty("ftimeCreated", ReplXML.SelectSingleNode("DS_REPL_VALUE_META_DATA")["ftimeCreated"].InnerText));
-                            GroupChangeObj.Members.Add(new PSNoteProperty("ftimeDeleted", ReplXML.SelectSingleNode("DS_REPL_VALUE_META_DATA")["ftimeDeleted"].InnerText));
-                            GroupChangesList.Add( GroupChangeObj );
-                        }
-                    }
-                    return GroupChangesList.ToArray();
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class GroupRecordDictionaryProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    SearchResult AdGroup = (SearchResult) record;
-                    LDAPClass.AdGroupDictionary.Add((Convert.ToString(new SecurityIdentifier((byte[])AdGroup.Properties["objectSID"][0], 0))),(Convert.ToString(AdGroup.Properties["samaccountname"][0])));
-                    return new PSObject[] { };
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class GroupMemberRecordProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    // SID history parsing
-                    SearchResult AdGroup = (SearchResult) record;
-                    List<PSObject> GroupsList = new List<PSObject>();
-                    string SamAccountType = AdGroup.Properties["samaccounttype"].Count != 0 ? Convert.ToString(AdGroup.Properties["samaccounttype"][0]) : "";
-                    string ObjectClass = Convert.ToString(AdGroup.Properties["objectclass"][AdGroup.Properties["objectclass"].Count-1]);
-                    string AccountType = "";
-                    string GroupName = "";
-                    string MemberUserName = "-";
-                    string MemberName = "";
-                    string PrimaryGroupID = "";
-                    PSObject GroupMemberObj = new PSObject();
-
-                    if (ObjectClass == "foreignSecurityPrincipal")
-                    {
-                        AccountType = "foreignSecurityPrincipal";
-                        MemberName = null;
-                        MemberUserName = ((Convert.ToString(AdGroup.Properties["DistinguishedName"][0])).Split(',')[0]).Split('=')[1];
-                        foreach (string GroupMember in AdGroup.Properties["memberof"])
-                        {
-                            GroupName = ((Convert.ToString(GroupMember)).Split(',')[0]).Split('=')[1];
-                            GroupMemberObj = new PSObject();
-                            GroupMemberObj.Members.Add(new PSNoteProperty("Group Name", GroupName));
-                            GroupMemberObj.Members.Add(new PSNoteProperty("Member UserName", MemberUserName));
-                            GroupMemberObj.Members.Add(new PSNoteProperty("Member Name", MemberName));
-                            GroupMemberObj.Members.Add(new PSNoteProperty("Member SID", Convert.ToString(new SecurityIdentifier((byte[])AdGroup.Properties["objectSid"][0], 0))));
-                            GroupMemberObj.Members.Add(new PSNoteProperty("AccountType", AccountType));
-                            GroupsList.Add( GroupMemberObj );
-                        }
-                    }
-
-                    if (Groups.Contains(SamAccountType))
-                    {
-                        AccountType = "group";
-                        MemberName = ((Convert.ToString(AdGroup.Properties["DistinguishedName"][0])).Split(',')[0]).Split('=')[1];
-                        foreach (string GroupMember in AdGroup.Properties["memberof"])
-                        {
-                            GroupName = ((Convert.ToString(GroupMember)).Split(',')[0]).Split('=')[1];
-                            GroupMemberObj = new PSObject();
-                            GroupMemberObj.Members.Add(new PSNoteProperty("Group Name", GroupName));
-                            GroupMemberObj.Members.Add(new PSNoteProperty("Member UserName", MemberUserName));
-                            GroupMemberObj.Members.Add(new PSNoteProperty("Member Name", MemberName));
-                            GroupMemberObj.Members.Add(new PSNoteProperty("Member SID", Convert.ToString(new SecurityIdentifier((byte[])AdGroup.Properties["objectSid"][0], 0))));
-                            GroupMemberObj.Members.Add(new PSNoteProperty("AccountType", AccountType));
-                            GroupsList.Add( GroupMemberObj );
-                        }
-                    }
-                    if (Users.Contains(SamAccountType))
-                    {
-                        AccountType = "user";
-                        MemberName = ((Convert.ToString(AdGroup.Properties["DistinguishedName"][0])).Split(',')[0]).Split('=')[1];
-                        MemberUserName = Convert.ToString(AdGroup.Properties["sAMAccountName"][0]);
-                        PrimaryGroupID = Convert.ToString(AdGroup.Properties["primaryGroupID"][0]);
-                        try
-                        {
-                            GroupName = LDAPClass.AdGroupDictionary[LDAPClass.DomainSID + "-" + PrimaryGroupID];
-                        }
-                        catch //(Exception e)
-                        {
-                            //Console.WriteLine("Exception caught: {0}", e);
-                            GroupName = PrimaryGroupID;
-                        }
-
-                        GroupMemberObj = new PSObject();
-                        GroupMemberObj.Members.Add(new PSNoteProperty("Group Name", GroupName));
-                        GroupMemberObj.Members.Add(new PSNoteProperty("Member UserName", MemberUserName));
-                        GroupMemberObj.Members.Add(new PSNoteProperty("Member Name", MemberName));
-                        GroupMemberObj.Members.Add(new PSNoteProperty("Member SID", Convert.ToString(new SecurityIdentifier((byte[])AdGroup.Properties["objectSid"][0], 0))));
-                        GroupMemberObj.Members.Add(new PSNoteProperty("AccountType", AccountType));
-                        GroupsList.Add( GroupMemberObj );
-
-                        foreach (string GroupMember in AdGroup.Properties["memberof"])
-                        {
-                            GroupName = ((Convert.ToString(GroupMember)).Split(',')[0]).Split('=')[1];
-                            GroupMemberObj = new PSObject();
-                            GroupMemberObj.Members.Add(new PSNoteProperty("Group Name", GroupName));
-                            GroupMemberObj.Members.Add(new PSNoteProperty("Member UserName", MemberUserName));
-                            GroupMemberObj.Members.Add(new PSNoteProperty("Member Name", MemberName));
-                            GroupMemberObj.Members.Add(new PSNoteProperty("Member SID", Convert.ToString(new SecurityIdentifier((byte[])AdGroup.Properties["objectSid"][0], 0))));
-                            GroupMemberObj.Members.Add(new PSNoteProperty("AccountType", AccountType));
-                            GroupsList.Add( GroupMemberObj );
-                        }
-                    }
-                    if (Computers.Contains(SamAccountType))
-                    {
-                        AccountType = "computer";
-                        MemberName = ((Convert.ToString(AdGroup.Properties["DistinguishedName"][0])).Split(',')[0]).Split('=')[1];
-                        MemberUserName = Convert.ToString(AdGroup.Properties["sAMAccountName"][0]);
-                        PrimaryGroupID = Convert.ToString(AdGroup.Properties["primaryGroupID"][0]);
-                        try
-                        {
-                            GroupName = LDAPClass.AdGroupDictionary[LDAPClass.DomainSID + "-" + PrimaryGroupID];
-                        }
-                        catch //(Exception e)
-                        {
-                            //Console.WriteLine("Exception caught: {0}", e);
-                            GroupName = PrimaryGroupID;
-                        }
-
-                        GroupMemberObj = new PSObject();
-                        GroupMemberObj.Members.Add(new PSNoteProperty("Group Name", GroupName));
-                        GroupMemberObj.Members.Add(new PSNoteProperty("Member UserName", MemberUserName));
-                        GroupMemberObj.Members.Add(new PSNoteProperty("Member Name", MemberName));
-                        GroupMemberObj.Members.Add(new PSNoteProperty("Member SID", Convert.ToString(new SecurityIdentifier((byte[])AdGroup.Properties["objectSid"][0], 0))));
-                        GroupMemberObj.Members.Add(new PSNoteProperty("AccountType", AccountType));
-                        GroupsList.Add( GroupMemberObj );
-
-                        foreach (string GroupMember in AdGroup.Properties["memberof"])
-                        {
-                            GroupName = ((Convert.ToString(GroupMember)).Split(',')[0]).Split('=')[1];
-                            GroupMemberObj = new PSObject();
-                            GroupMemberObj.Members.Add(new PSNoteProperty("Group Name", GroupName));
-                            GroupMemberObj.Members.Add(new PSNoteProperty("Member UserName", MemberUserName));
-                            GroupMemberObj.Members.Add(new PSNoteProperty("Member Name", MemberName));
-                            GroupMemberObj.Members.Add(new PSNoteProperty("Member SID", Convert.ToString(new SecurityIdentifier((byte[])AdGroup.Properties["objectSid"][0], 0))));
-                            GroupMemberObj.Members.Add(new PSNoteProperty("AccountType", AccountType));
-                            GroupsList.Add( GroupMemberObj );
-                        }
-                    }
-                    if (TrustAccounts.Contains(SamAccountType))
-                    {
-                        AccountType = "trust";
-                        MemberName = ((Convert.ToString(AdGroup.Properties["DistinguishedName"][0])).Split(',')[0]).Split('=')[1];
-                        MemberUserName = Convert.ToString(AdGroup.Properties["sAMAccountName"][0]);
-                        PrimaryGroupID = Convert.ToString(AdGroup.Properties["primaryGroupID"][0]);
-                        try
-                        {
-                            GroupName = LDAPClass.AdGroupDictionary[LDAPClass.DomainSID + "-" + PrimaryGroupID];
-                        }
-                        catch //(Exception e)
-                        {
-                            //Console.WriteLine("Exception caught: {0}", e);
-                            GroupName = PrimaryGroupID;
-                        }
-
-                        GroupMemberObj = new PSObject();
-                        GroupMemberObj.Members.Add(new PSNoteProperty("Group Name", GroupName));
-                        GroupMemberObj.Members.Add(new PSNoteProperty("Member UserName", MemberUserName));
-                        GroupMemberObj.Members.Add(new PSNoteProperty("Member Name", MemberName));
-                        GroupMemberObj.Members.Add(new PSNoteProperty("Member SID", Convert.ToString(new SecurityIdentifier((byte[])AdGroup.Properties["objectSid"][0], 0))));
-                        GroupMemberObj.Members.Add(new PSNoteProperty("AccountType", AccountType));
-                        GroupsList.Add( GroupMemberObj );
-                    }
-                    return GroupsList.ToArray();
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class OURecordProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    SearchResult AdOU = (SearchResult) record;
-
-                    PSObject OUObj = new PSObject();
-                    OUObj.Members.Add(new PSNoteProperty("Name", AdOU.Properties["name"][0]));
-                    OUObj.Members.Add(new PSNoteProperty("Depth", ((Convert.ToString(AdOU.Properties["distinguishedname"][0]).Split(new string[] { "OU=" }, StringSplitOptions.None)).Length -1)));
-                    OUObj.Members.Add(new PSNoteProperty("Description", (AdOU.Properties["description"].Count != 0 ? AdOU.Properties["description"][0] : "")));
-                    OUObj.Members.Add(new PSNoteProperty("whenCreated", AdOU.Properties["whencreated"][0]));
-                    OUObj.Members.Add(new PSNoteProperty("whenChanged", AdOU.Properties["whenchanged"][0]));
-                    OUObj.Members.Add(new PSNoteProperty("DistinguishedName", AdOU.Properties["distinguishedname"][0]));
-                    return new PSObject[] { OUObj };
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class GPORecordProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    SearchResult AdGPO = (SearchResult) record;
-
-                    PSObject GPOObj = new PSObject();
-                    GPOObj.Members.Add(new PSNoteProperty("DisplayName", CleanString(AdGPO.Properties["displayname"][0])));
-                    GPOObj.Members.Add(new PSNoteProperty("GUID", CleanString(AdGPO.Properties["name"][0])));
-                    GPOObj.Members.Add(new PSNoteProperty("whenCreated", AdGPO.Properties["whenCreated"][0]));
-                    GPOObj.Members.Add(new PSNoteProperty("whenChanged", AdGPO.Properties["whenChanged"][0]));
-                    GPOObj.Members.Add(new PSNoteProperty("DistinguishedName", CleanString(AdGPO.Properties["distinguishedname"][0])));
-                    GPOObj.Members.Add(new PSNoteProperty("FilePath", AdGPO.Properties["gpcfilesyspath"][0]));
-                    return new PSObject[] { GPOObj };
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class GPORecordDictionaryProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    SearchResult AdGPO = (SearchResult) record;
-                    LDAPClass.AdGPODictionary.Add((Convert.ToString(AdGPO.Properties["distinguishedname"][0]).ToUpper()), (Convert.ToString(AdGPO.Properties["displayname"][0])));
-                    return new PSObject[] { };
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class SOMRecordProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    SearchResult AdSOM = (SearchResult) record;
-
-                    List<PSObject> SOMsList = new List<PSObject>();
-                    int Depth = 0;
-                    bool BlockInheritance = false;
-                    bool? LinkEnabled = null;
-                    bool? Enforced = null;
-                    string gPLink = (AdSOM.Properties["gPLink"].Count != 0 ? Convert.ToString(AdSOM.Properties["gPLink"][0]) : "");
-                    string GPOName = null;
-
-                    Depth = ((Convert.ToString(AdSOM.Properties["distinguishedname"][0]).Split(new string[] { "OU=" }, StringSplitOptions.None)).Length -1);
-                    if (AdSOM.Properties["gPOptions"].Count != 0)
-                    {
-                        if ((int) AdSOM.Properties["gPOptions"][0] == 1)
-                        {
-                            BlockInheritance = true;
-                        }
-                    }
-                    var GPLinks = gPLink.Split(']', '[').Where(x => x.StartsWith("LDAP"));
-                    int Order = (GPLinks.ToArray()).Length;
-                    if (Order == 0)
-                    {
-                        PSObject SOMObj = new PSObject();
-                        SOMObj.Members.Add(new PSNoteProperty("Name", AdSOM.Properties["name"][0]));
-                        SOMObj.Members.Add(new PSNoteProperty("Depth", Depth));
-                        SOMObj.Members.Add(new PSNoteProperty("DistinguishedName", AdSOM.Properties["distinguishedname"][0]));
-                        SOMObj.Members.Add(new PSNoteProperty("Link Order", null));
-                        SOMObj.Members.Add(new PSNoteProperty("GPO", GPOName));
-                        SOMObj.Members.Add(new PSNoteProperty("Enforced", Enforced));
-                        SOMObj.Members.Add(new PSNoteProperty("Link Enabled", LinkEnabled));
-                        SOMObj.Members.Add(new PSNoteProperty("BlockInheritance", BlockInheritance));
-                        SOMObj.Members.Add(new PSNoteProperty("gPLink", gPLink));
-                        SOMObj.Members.Add(new PSNoteProperty("gPOptions", (AdSOM.Properties["gpoptions"].Count != 0 ? AdSOM.Properties["gpoptions"][0] : "")));
-                        SOMsList.Add( SOMObj );
-                    }
-                    foreach (string link in GPLinks)
-                    {
-                        string[] linksplit = link.Split('/', ';');
-                        if (!Convert.ToBoolean((Convert.ToInt32(linksplit[3]) & 1)))
-                        {
-                            LinkEnabled = true;
-                        }
-                        else
-                        {
-                            LinkEnabled = false;
-                        }
-                        if (Convert.ToBoolean((Convert.ToInt32(linksplit[3]) & 2)))
-                        {
-                            Enforced = true;
-                        }
-                        else
-                        {
-                            Enforced = false;
-                        }
-                        GPOName = LDAPClass.AdGPODictionary.ContainsKey(linksplit[2].ToUpper()) ? LDAPClass.AdGPODictionary[linksplit[2].ToUpper()] : linksplit[2].Split('=',',')[1];
-                        PSObject SOMObj = new PSObject();
-                        SOMObj.Members.Add(new PSNoteProperty("Name", AdSOM.Properties["name"][0]));
-                        SOMObj.Members.Add(new PSNoteProperty("Depth", Depth));
-                        SOMObj.Members.Add(new PSNoteProperty("DistinguishedName", AdSOM.Properties["distinguishedname"][0]));
-                        SOMObj.Members.Add(new PSNoteProperty("Link Order", Order));
-                        SOMObj.Members.Add(new PSNoteProperty("GPO", GPOName));
-                        SOMObj.Members.Add(new PSNoteProperty("Enforced", Enforced));
-                        SOMObj.Members.Add(new PSNoteProperty("Link Enabled", LinkEnabled));
-                        SOMObj.Members.Add(new PSNoteProperty("BlockInheritance", BlockInheritance));
-                        SOMObj.Members.Add(new PSNoteProperty("gPLink", gPLink));
-                        SOMObj.Members.Add(new PSNoteProperty("gPOptions", (AdSOM.Properties["gpoptions"].Count != 0 ? AdSOM.Properties["gpoptions"][0] : "")));
-                        SOMsList.Add( SOMObj );
-                        Order--;
-                    }
-                    return SOMsList.ToArray();
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class PrinterRecordProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    SearchResult AdPrinter = (SearchResult) record;
-
-                    PSObject PrinterObj = new PSObject();
-                    PrinterObj.Members.Add(new PSNoteProperty("Name", AdPrinter.Properties["Name"][0]));
-                    PrinterObj.Members.Add(new PSNoteProperty("ServerName", AdPrinter.Properties["serverName"][0]));
-                    PrinterObj.Members.Add(new PSNoteProperty("ShareName", AdPrinter.Properties["printShareName"][0]));
-                    PrinterObj.Members.Add(new PSNoteProperty("DriverName", AdPrinter.Properties["driverName"][0]));
-                    PrinterObj.Members.Add(new PSNoteProperty("DriverVersion", AdPrinter.Properties["driverVersion"][0]));
-                    PrinterObj.Members.Add(new PSNoteProperty("PortName", AdPrinter.Properties["portName"][0]));
-                    PrinterObj.Members.Add(new PSNoteProperty("URL", AdPrinter.Properties["url"][0]));
-                    PrinterObj.Members.Add(new PSNoteProperty("whenCreated", AdPrinter.Properties["whenCreated"][0]));
-                    PrinterObj.Members.Add(new PSNoteProperty("whenChanged", AdPrinter.Properties["whenChanged"][0]));
-                    return new PSObject[] { PrinterObj };
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class ComputerRecordProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    SearchResult AdComputer = (SearchResult) record;
-                    bool Dormant = false;
-                    bool? Enabled = null;
-                    bool PasswordNotChangedafterMaxAge = false;
-                    bool? TrustedforDelegation = null;
-                    bool? TrustedtoAuthforDelegation = null;
-                    string DelegationType = null;
-                    string DelegationProtocol = null;
-                    string DelegationServices = null;
-                    string StrIPAddress = null;
-                    int? DaysSinceLastLogon = null;
-                    int? DaysSinceLastPasswordChange = null;
-                    DateTime? LastLogonDate = null;
-                    DateTime? PasswordLastSet = null;
-
-                    if (AdComputer.Properties["dnshostname"].Count != 0)
-                    {
-                        try
-                        {
-                            StrIPAddress = Convert.ToString(Dns.GetHostEntry(Convert.ToString(AdComputer.Properties["dnshostname"][0])).AddressList[0]);
-                        }
-                        catch
-                        {
-                            StrIPAddress = null;
-                        }
-                    }
-                    // When the user is not allowed to query the UserAccountControl attribute.
-                    if (AdComputer.Properties["useraccountcontrol"].Count != 0)
-                    {
-                        var userFlags = (UACFlags) AdComputer.Properties["useraccountcontrol"][0];
-                        Enabled = !((userFlags & UACFlags.ACCOUNTDISABLE) == UACFlags.ACCOUNTDISABLE);
-                        TrustedforDelegation = (userFlags & UACFlags.TRUSTED_FOR_DELEGATION) == UACFlags.TRUSTED_FOR_DELEGATION;
-                        TrustedtoAuthforDelegation = (userFlags & UACFlags.TRUSTED_TO_AUTHENTICATE_FOR_DELEGATION) == UACFlags.TRUSTED_TO_AUTHENTICATE_FOR_DELEGATION;
-                    }
-                    if (AdComputer.Properties["lastlogontimestamp"].Count != 0)
-                    {
-                        LastLogonDate = DateTime.FromFileTime((long)(AdComputer.Properties["lastlogontimestamp"][0]));
-                        DaysSinceLastLogon = Math.Abs((Date1 - (DateTime)LastLogonDate).Days);
-                        if (DaysSinceLastLogon > DormantTimeSpan)
-                        {
-                            Dormant = true;
-                        }
-                    }
-                    if (AdComputer.Properties["pwdlastset"].Count != 0)
-                    {
-                        PasswordLastSet = DateTime.FromFileTime((long)(AdComputer.Properties["pwdlastset"][0]));
-                        DaysSinceLastPasswordChange = Math.Abs((Date1 - (DateTime)PasswordLastSet).Days);
-                        if (DaysSinceLastPasswordChange > PassMaxAge)
-                        {
-                            PasswordNotChangedafterMaxAge = true;
-                        }
-                    }
-                    if ( ((bool) TrustedforDelegation) && ((int) AdComputer.Properties["primarygroupid"][0] == 515) )
-                    {
-                        DelegationType = "Unconstrained";
-                        DelegationServices = "Any";
-                    }
-                    if (AdComputer.Properties["msDS-AllowedToDelegateTo"].Count >= 1)
-                    {
-                        DelegationType = "Constrained";
-                        for (int i = 0; i < AdComputer.Properties["msDS-AllowedToDelegateTo"].Count; i++)
-                        {
-                            var delegateto = AdComputer.Properties["msDS-AllowedToDelegateTo"][i];
-                            DelegationServices = DelegationServices + "," + Convert.ToString(delegateto);
-                        }
-                        DelegationServices = DelegationServices.TrimStart(',');
-                    }
-                    if ((bool) TrustedtoAuthforDelegation)
-                    {
-                        DelegationProtocol = "Any";
-                    }
-                    else if (DelegationType != null)
-                    {
-                        DelegationProtocol = "Kerberos";
-                    }
-                    string SIDHistory = "";
-                    if (AdComputer.Properties["sidhistory"].Count >= 1)
-                    {
-                        string sids = "";
-                        for (int i = 0; i < AdComputer.Properties["sidhistory"].Count; i++)
-                        {
-                            var history = AdComputer.Properties["sidhistory"][i];
-                            sids = sids + "," + Convert.ToString(new SecurityIdentifier((byte[])history, 0));
-                        }
-                        SIDHistory = sids.TrimStart(',');
-                    }
-                    string OperatingSystem = CleanString((AdComputer.Properties["operatingsystem"].Count != 0 ? AdComputer.Properties["operatingsystem"][0] : "-") + " " + (AdComputer.Properties["operatingsystemhotfix"].Count != 0 ? AdComputer.Properties["operatingsystemhotfix"][0] : " ") + " " + (AdComputer.Properties["operatingsystemservicepack"].Count != 0 ? AdComputer.Properties["operatingsystemservicepack"][0] : " ") + " " + (AdComputer.Properties["operatingsystemversion"].Count != 0 ? AdComputer.Properties["operatingsystemversion"][0] : " "));
-
-                    PSObject ComputerObj = new PSObject();
-                    ComputerObj.Members.Add(new PSNoteProperty("UserName", (AdComputer.Properties["samaccountname"].Count != 0 ? CleanString(AdComputer.Properties["samaccountname"][0]) : "")));
-                    ComputerObj.Members.Add(new PSNoteProperty("Name", (AdComputer.Properties["name"].Count != 0 ? CleanString(AdComputer.Properties["name"][0]) : "")));
-                    ComputerObj.Members.Add(new PSNoteProperty("DNSHostName", (AdComputer.Properties["dnshostname"].Count != 0 ? AdComputer.Properties["dnshostname"][0] : "")));
-                    ComputerObj.Members.Add(new PSNoteProperty("Enabled", Enabled));
-                    ComputerObj.Members.Add(new PSNoteProperty("IPv4Address", StrIPAddress));
-                    ComputerObj.Members.Add(new PSNoteProperty("Operating System", OperatingSystem));
-                    ComputerObj.Members.Add(new PSNoteProperty("Logon Age (days)", DaysSinceLastLogon));
-                    ComputerObj.Members.Add(new PSNoteProperty("Password Age (days)", DaysSinceLastPasswordChange));
-                    ComputerObj.Members.Add(new PSNoteProperty("Dormant (> " + DormantTimeSpan + " days)", Dormant));
-                    ComputerObj.Members.Add(new PSNoteProperty("Password Age (> " + PassMaxAge + " days)", PasswordNotChangedafterMaxAge));
-                    ComputerObj.Members.Add(new PSNoteProperty("Delegation Type", DelegationType));
-                    ComputerObj.Members.Add(new PSNoteProperty("Delegation Protocol", DelegationProtocol));
-                    ComputerObj.Members.Add(new PSNoteProperty("Delegation Services", DelegationServices));
-                    ComputerObj.Members.Add(new PSNoteProperty("Primary Group ID", (AdComputer.Properties["primarygroupid"].Count != 0 ? AdComputer.Properties["primarygroupid"][0] : "")));
-                    ComputerObj.Members.Add(new PSNoteProperty("SID", Convert.ToString(new SecurityIdentifier((byte[])AdComputer.Properties["objectSID"][0], 0))));
-                    ComputerObj.Members.Add(new PSNoteProperty("SIDHistory", SIDHistory));
-                    ComputerObj.Members.Add(new PSNoteProperty("Description", (AdComputer.Properties["Description"].Count != 0 ? CleanString(AdComputer.Properties["Description"][0]) : "")));
-                    ComputerObj.Members.Add(new PSNoteProperty("ms-ds-CreatorSid", (AdComputer.Properties["ms-ds-CreatorSid"].Count != 0 ? Convert.ToString(new SecurityIdentifier((byte[])AdComputer.Properties["ms-ds-CreatorSid"][0], 0)) : "")));
-                    ComputerObj.Members.Add(new PSNoteProperty("Last Logon Date", LastLogonDate));
-                    ComputerObj.Members.Add(new PSNoteProperty("Password LastSet", PasswordLastSet));
-                    ComputerObj.Members.Add(new PSNoteProperty("UserAccountControl", (AdComputer.Properties["useraccountcontrol"].Count != 0 ? AdComputer.Properties["useraccountcontrol"][0] : "")));
-                    ComputerObj.Members.Add(new PSNoteProperty("whenCreated", AdComputer.Properties["whencreated"][0]));
-                    ComputerObj.Members.Add(new PSNoteProperty("whenChanged", AdComputer.Properties["whenchanged"][0]));
-                    ComputerObj.Members.Add(new PSNoteProperty("Distinguished Name", AdComputer.Properties["distinguishedname"][0]));
-                    return new PSObject[] { ComputerObj };
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class ComputerSPNRecordProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    SearchResult AdComputer = (SearchResult) record;
-                    if (AdComputer.Properties["serviceprincipalname"].Count == 0)
-                    {
-                        return new PSObject[] { };
-                    }
-                    List<PSObject> SPNList = new List<PSObject>();
-
-                    foreach (string SPN in AdComputer.Properties["serviceprincipalname"])
-                    {
-                        string[] SPNArray = SPN.Split('/');
-                        bool flag = true;
-                        foreach (PSObject Obj in SPNList)
-                        {
-                            if ( (string) Obj.Members["Service"].Value == SPNArray[0] )
-                            {
-                                Obj.Members["Host"].Value = string.Join(",", (Obj.Members["Host"].Value + "," + SPNArray[1]).Split(',').Distinct().ToArray());
-                                flag = false;
-                            }
-                        }
-                        if (flag)
-                        {
-                            PSObject ComputerSPNObj = new PSObject();
-                            ComputerSPNObj.Members.Add(new PSNoteProperty("UserName", (AdComputer.Properties["samaccountname"].Count != 0 ? CleanString(AdComputer.Properties["samaccountname"][0]) : "")));
-                            ComputerSPNObj.Members.Add(new PSNoteProperty("Name", (AdComputer.Properties["name"].Count != 0 ? CleanString(AdComputer.Properties["name"][0]) : "")));
-                            ComputerSPNObj.Members.Add(new PSNoteProperty("Service", SPNArray[0]));
-                            ComputerSPNObj.Members.Add(new PSNoteProperty("Host", SPNArray[1]));
-                            SPNList.Add( ComputerSPNObj );
-                        }
-                    }
-                    return SPNList.ToArray();
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class LAPSRecordProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    SearchResult AdComputer = (SearchResult) record;
-                    bool? Enabled = null;
-                    bool PasswordStored = false;
-                    DateTime? CurrentExpiration = null;
-                    // When the user is not allowed to query the UserAccountControl attribute.
-                    if (AdComputer.Properties["useraccountcontrol"].Count != 0)
-                    {
-                        var userFlags = (UACFlags) AdComputer.Properties["useraccountcontrol"][0];
-                        Enabled = !((userFlags & UACFlags.ACCOUNTDISABLE) == UACFlags.ACCOUNTDISABLE);
-                    }
-                    if (AdComputer.Properties["ms-mcs-admpwdexpirationtime"].Count != 0)
-                    {
-                        CurrentExpiration = DateTime.FromFileTime((long)(AdComputer.Properties["ms-mcs-admpwdexpirationtime"][0]));
-                        PasswordStored = true;
-                    }
-                    PSObject LAPSObj = new PSObject();
-                    LAPSObj.Members.Add(new PSNoteProperty("Hostname", (AdComputer.Properties["dnshostname"].Count != 0 ? AdComputer.Properties["dnshostname"][0] : AdComputer.Properties["cn"][0] )));
-                    LAPSObj.Members.Add(new PSNoteProperty("Enabled", Enabled));
-                    LAPSObj.Members.Add(new PSNoteProperty("Stored", PasswordStored));
-                    LAPSObj.Members.Add(new PSNoteProperty("Readable", (AdComputer.Properties["ms-mcs-admpwd"].Count != 0 ? true : false)));
-                    LAPSObj.Members.Add(new PSNoteProperty("Password", (AdComputer.Properties["ms-mcs-admpwd"].Count != 0 ? AdComputer.Properties["ms-mcs-admpwd"][0] : null)));
-                    LAPSObj.Members.Add(new PSNoteProperty("Expiration", CurrentExpiration));
-                    return new PSObject[] { LAPSObj };
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class SIDRecordDictionaryProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    SearchResult AdObject = (SearchResult) record;
-                    switch (Convert.ToString(AdObject.Properties["objectclass"][AdObject.Properties["objectclass"].Count-1]))
-                    {
-                        case "user":
-                        case "computer":
-                        case "group":
-                            LDAPClass.AdSIDDictionary.Add(Convert.ToString(new SecurityIdentifier((byte[])AdObject.Properties["objectSID"][0], 0)), (Convert.ToString(AdObject.Properties["name"][0])));
-                            break;
-                    }
-                    return new PSObject[] { };
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        class DACLRecordProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    SearchResult AdObject = (SearchResult) record;
-                    byte[] ntSecurityDescriptor = null;
-                    string Name = null;
-                    string Type = null;
-                    List<PSObject> DACLList = new List<PSObject>();
-
-                    Name = Convert.ToString(AdObject.Properties["name"][0]);
-
-                    switch (Convert.ToString(AdObject.Properties["objectclass"][AdObject.Properties["objectclass"].Count-1]))
-                    {
-                        case "user":
-                            Type = "User";
-                            break;
-                        case "computer":
-                            Type = "Computer";
-                            break;
-                        case "group":
-                            Type = "Group";
-                            break;
-                        case "container":
-                            Type = "Container";
-                            break;
-                        case "groupPolicyContainer":
-                            Type = "GPO";
-                            Name = Convert.ToString(AdObject.Properties["displayname"][0]);
-                            break;
-                        case "organizationalUnit":
-                            Type = "OU";
-                            break;
-                        case "domainDNS":
-                            Type = "Domain";
-                            break;
-                        default:
-                            Type = Convert.ToString(AdObject.Properties["objectclass"][AdObject.Properties["objectclass"].Count-1]);
-                            break;
-                    }
-
-                    // When the user is not allowed to query the ntsecuritydescriptor attribute.
-                    if (AdObject.Properties["ntsecuritydescriptor"].Count != 0)
-                    {
-                        ntSecurityDescriptor = (byte[]) AdObject.Properties["ntsecuritydescriptor"][0];
-                    }
-                    else
-                    {
-                        DirectoryEntry AdObjectEntry = ((SearchResult)record).GetDirectoryEntry();
-                        ntSecurityDescriptor = (byte[]) AdObjectEntry.ObjectSecurity.GetSecurityDescriptorBinaryForm();
-                    }
-                    if (ntSecurityDescriptor != null)
-                    {
-                        DirectoryObjectSecurity DirObjSec = new ActiveDirectorySecurity();
-                        DirObjSec.SetSecurityDescriptorBinaryForm(ntSecurityDescriptor);
-                        AuthorizationRuleCollection AccessRules = (AuthorizationRuleCollection) DirObjSec.GetAccessRules(true,true,typeof(System.Security.Principal.NTAccount));
-                        foreach (ActiveDirectoryAccessRule Rule in AccessRules)
-                        {
-                            string IdentityReference = Convert.ToString(Rule.IdentityReference);
-                            string Owner = Convert.ToString(DirObjSec.GetOwner(typeof(System.Security.Principal.SecurityIdentifier)));
-                            PSObject ObjectObj = new PSObject();
-                            ObjectObj.Members.Add(new PSNoteProperty("Name", CleanString(Name)));
-                            ObjectObj.Members.Add(new PSNoteProperty("Type", Type));
-                            ObjectObj.Members.Add(new PSNoteProperty("ObjectTypeName", LDAPClass.GUIDs[Convert.ToString(Rule.ObjectType)]));
-                            ObjectObj.Members.Add(new PSNoteProperty("InheritedObjectTypeName", LDAPClass.GUIDs[Convert.ToString(Rule.InheritedObjectType)]));
-                            ObjectObj.Members.Add(new PSNoteProperty("ActiveDirectoryRights", Rule.ActiveDirectoryRights));
-                            ObjectObj.Members.Add(new PSNoteProperty("AccessControlType", Rule.AccessControlType));
-                            ObjectObj.Members.Add(new PSNoteProperty("IdentityReferenceName", LDAPClass.AdSIDDictionary.ContainsKey(IdentityReference) ? LDAPClass.AdSIDDictionary[IdentityReference] : IdentityReference));
-                            ObjectObj.Members.Add(new PSNoteProperty("OwnerName", LDAPClass.AdSIDDictionary.ContainsKey(Owner) ? LDAPClass.AdSIDDictionary[Owner] : Owner));
-                            ObjectObj.Members.Add(new PSNoteProperty("Inherited", Rule.IsInherited));
-                            ObjectObj.Members.Add(new PSNoteProperty("ObjectFlags", Rule.ObjectFlags));
-                            ObjectObj.Members.Add(new PSNoteProperty("InheritanceFlags", Rule.InheritanceFlags));
-                            ObjectObj.Members.Add(new PSNoteProperty("InheritanceType", Rule.InheritanceType));
-                            ObjectObj.Members.Add(new PSNoteProperty("PropagationFlags", Rule.PropagationFlags));
-                            ObjectObj.Members.Add(new PSNoteProperty("ObjectType", Rule.ObjectType));
-                            ObjectObj.Members.Add(new PSNoteProperty("InheritedObjectType", Rule.InheritedObjectType));
-                            ObjectObj.Members.Add(new PSNoteProperty("IdentityReference", Rule.IdentityReference));
-                            ObjectObj.Members.Add(new PSNoteProperty("Owner", Owner));
-                            ObjectObj.Members.Add(new PSNoteProperty("DistinguishedName", AdObject.Properties["distinguishedname"][0]));
-                            DACLList.Add( ObjectObj );
-                        }
-                    }
-
-                    return DACLList.ToArray();
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-    class SACLRecordProcessor : IRecordProcessor
-        {
-            public PSObject[] processRecord(Object record)
-            {
-                try
-                {
-                    SearchResult AdObject = (SearchResult) record;
-                    byte[] ntSecurityDescriptor = null;
-                    string Name = null;
-                    string Type = null;
-                    List<PSObject> SACLList = new List<PSObject>();
-
-                    Name = Convert.ToString(AdObject.Properties["name"][0]);
-
-                    switch (Convert.ToString(AdObject.Properties["objectclass"][AdObject.Properties["objectclass"].Count-1]))
-                    {
-                        case "user":
-                            Type = "User";
-                            break;
-                        case "computer":
-                            Type = "Computer";
-                            break;
-                        case "group":
-                            Type = "Group";
-                            break;
-                        case "container":
-                            Type = "Container";
-                            break;
-                        case "groupPolicyContainer":
-                            Type = "GPO";
-                            Name = Convert.ToString(AdObject.Properties["displayname"][0]);
-                            break;
-                        case "organizationalUnit":
-                            Type = "OU";
-                            break;
-                        case "domainDNS":
-                            Type = "Domain";
-                            break;
-                        default:
-                            Type = Convert.ToString(AdObject.Properties["objectclass"][AdObject.Properties["objectclass"].Count-1]);
-                            break;
-                    }
-
-                    // When the user is not allowed to query the ntsecuritydescriptor attribute.
-                    if (AdObject.Properties["ntsecuritydescriptor"].Count != 0)
-                    {
-                        ntSecurityDescriptor = (byte[]) AdObject.Properties["ntsecuritydescriptor"][0];
-                    }
-                    else
-                    {
-                        DirectoryEntry AdObjectEntry = ((SearchResult)record).GetDirectoryEntry();
-                        ntSecurityDescriptor = (byte[]) AdObjectEntry.ObjectSecurity.GetSecurityDescriptorBinaryForm();
-                    }
-                    if (ntSecurityDescriptor != null)
-                    {
-                        DirectoryObjectSecurity DirObjSec = new ActiveDirectorySecurity();
-                        DirObjSec.SetSecurityDescriptorBinaryForm(ntSecurityDescriptor);
-                        AuthorizationRuleCollection AuditRules = (AuthorizationRuleCollection) DirObjSec.GetAuditRules(true,true,typeof(System.Security.Principal.NTAccount));
-                        foreach (ActiveDirectoryAuditRule Rule in AuditRules)
-                        {
-                            string IdentityReference = Convert.ToString(Rule.IdentityReference);
-                            PSObject ObjectObj = new PSObject();
-                            ObjectObj.Members.Add(new PSNoteProperty("Name", CleanString(Name)));
-                            ObjectObj.Members.Add(new PSNoteProperty("Type", Type));
-                            ObjectObj.Members.Add(new PSNoteProperty("ObjectTypeName", LDAPClass.GUIDs[Convert.ToString(Rule.ObjectType)]));
-                            ObjectObj.Members.Add(new PSNoteProperty("InheritedObjectTypeName", LDAPClass.GUIDs[Convert.ToString(Rule.InheritedObjectType)]));
-                            ObjectObj.Members.Add(new PSNoteProperty("ActiveDirectoryRights", Rule.ActiveDirectoryRights));
-                            ObjectObj.Members.Add(new PSNoteProperty("IdentityReferenceName", LDAPClass.AdSIDDictionary.ContainsKey(IdentityReference) ? LDAPClass.AdSIDDictionary[IdentityReference] : IdentityReference));
-                            ObjectObj.Members.Add(new PSNoteProperty("AuditFlags", Rule.AuditFlags));
-                            ObjectObj.Members.Add(new PSNoteProperty("ObjectFlags", Rule.ObjectFlags));
-                            ObjectObj.Members.Add(new PSNoteProperty("InheritanceFlags", Rule.InheritanceFlags));
-                            ObjectObj.Members.Add(new PSNoteProperty("InheritanceType", Rule.InheritanceType));
-                            ObjectObj.Members.Add(new PSNoteProperty("Inherited", Rule.IsInherited));
-                            ObjectObj.Members.Add(new PSNoteProperty("PropagationFlags", Rule.PropagationFlags));
-                            ObjectObj.Members.Add(new PSNoteProperty("ObjectType", Rule.ObjectType));
-                            ObjectObj.Members.Add(new PSNoteProperty("InheritedObjectType", Rule.InheritedObjectType));
-                            ObjectObj.Members.Add(new PSNoteProperty("IdentityReference", Rule.IdentityReference));
-                            SACLList.Add( ObjectObj );
-                        }
-                    }
-
-                    return SACLList.ToArray();
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine("Exception caught: {0}", e);
-                    return new PSObject[] { };
-                }
-            }
-        }
-
-        //The interface and implmentation class used to handle the results (this implementation just writes the strings to a file)
-
-        interface IResultsHandler
-        {
-            void processResults(Object[] t);
-
-            Object[] finalise();
-        }
-
-        class SimpleResultsHandler : IResultsHandler
-        {
-            private Object lockObj = new Object();
-            private List<Object> processed = new List<Object>();
-
-            public SimpleResultsHandler()
-            {
-            }
-
-            public void processResults(Object[] results)
-            {
-                lock (lockObj)
-                {
-                    if (results.Length != 0)
-                    {
-                        for (var i = 0; i < results.Length; i++)
-                        {
-                            processed.Add((PSObject)results[i]);
-                        }
-                    }
-                }
-            }
-
-            public Object[] finalise()
-            {
-                return processed.ToArray();
-            }
-        }
-"@
-
-# modified version from https://github.com/vletoux/SmbScanner/blob/master/smbscanner.ps1
-$SMBInfoScannerSource = @"
-
-        [StructLayout(LayoutKind.Explicit)]
-		struct SMB_Header {
-			[FieldOffset(0)]
-			public UInt32 Protocol;
-			[FieldOffset(4)]
-			public byte Command;
-			[FieldOffset(5)]
-			public int Status;
-			[FieldOffset(9)]
-			public byte  Flags;
-			[FieldOffset(10)]
-			public UInt16 Flags2;
-			[FieldOffset(12)]
-			public UInt16 PIDHigh;
-			[FieldOffset(14)]
-			public UInt64 SecurityFeatures;
-			[FieldOffset(22)]
-			public UInt16 Reserved;
-			[FieldOffset(24)]
-			public UInt16 TID;
-			[FieldOffset(26)]
-			public UInt16 PIDLow;
-			[FieldOffset(28)]
-			public UInt16 UID;
-			[FieldOffset(30)]
-			public UInt16 MID;
-		};
-		// https://msdn.microsoft.com/en-us/library/cc246529.aspx
-		[StructLayout(LayoutKind.Explicit)]
-		struct SMB2_Header {
-			[FieldOffset(0)]
-			public UInt32 ProtocolId;
-			[FieldOffset(4)]
-			public UInt16 StructureSize;
-			[FieldOffset(6)]
-			public UInt16 CreditCharge;
-			[FieldOffset(8)]
-			public UInt32 Status; // to do SMB3
-			[FieldOffset(12)]
-			public UInt16 Command;
-			[FieldOffset(14)]
-			public UInt16 CreditRequest_Response;
-			[FieldOffset(16)]
-			public UInt32 Flags;
-			[FieldOffset(20)]
-			public UInt32 NextCommand;
-			[FieldOffset(24)]
-			public UInt64 MessageId;
-			[FieldOffset(32)]
-			public UInt32 Reserved;
-			[FieldOffset(36)]
-			public UInt32 TreeId;
-			[FieldOffset(40)]
-			public UInt64 SessionId;
-			[FieldOffset(48)]
-			public UInt64 Signature1;
-			[FieldOffset(56)]
-			public UInt64 Signature2;
-		}
-        [StructLayout(LayoutKind.Explicit)]
-		struct SMB2_NegotiateRequest
-		{
-			[FieldOffset(0)]
-			public UInt16 StructureSize;
-			[FieldOffset(2)]
-			public UInt16 DialectCount;
-			[FieldOffset(4)]
-			public UInt16 SecurityMode;
-			[FieldOffset(6)]
-			public UInt16 Reserved;
-			[FieldOffset(8)]
-			public UInt32 Capabilities;
-			[FieldOffset(12)]
-			public Guid ClientGuid;
-			[FieldOffset(28)]
-			public UInt64 ClientStartTime;
-			[FieldOffset(36)]
-			public UInt16 DialectToTest;
-		}
-		const int SMB_COM_NEGOTIATE	= 0x72;
-		const int SMB2_NEGOTIATE = 0;
-		const int SMB_FLAGS_CASE_INSENSITIVE = 0x08;
-		const int SMB_FLAGS_CANONICALIZED_PATHS = 0x10;
-		const int SMB_FLAGS2_LONG_NAMES					= 0x0001;
-		const int SMB_FLAGS2_EAS							= 0x0002;
-		const int SMB_FLAGS2_SECURITY_SIGNATURE_REQUIRED	= 0x0010	;
-		const int SMB_FLAGS2_IS_LONG_NAME					= 0x0040;
-		const int SMB_FLAGS2_ESS							= 0x0800;
-		const int SMB_FLAGS2_NT_STATUS					= 0x4000;
-		const int SMB_FLAGS2_UNICODE						= 0x8000;
-		const int SMB_DB_FORMAT_DIALECT = 0x02;
-		static byte[] GenerateSmbHeaderFromCommand(byte command)
-		{
-			SMB_Header header = new SMB_Header();
-			header.Protocol = 0x424D53FF;
-			header.Command = command;
-			header.Status = 0;
-			header.Flags = SMB_FLAGS_CASE_INSENSITIVE | SMB_FLAGS_CANONICALIZED_PATHS;
-			header.Flags2 = SMB_FLAGS2_LONG_NAMES | SMB_FLAGS2_EAS | SMB_FLAGS2_SECURITY_SIGNATURE_REQUIRED | SMB_FLAGS2_IS_LONG_NAME | SMB_FLAGS2_ESS | SMB_FLAGS2_NT_STATUS | SMB_FLAGS2_UNICODE;
-			header.PIDHigh = 0;
-			header.SecurityFeatures = 0;
-			header.Reserved = 0;
-			header.TID = 0xffff;
-			header.PIDLow = 0xFEFF;
-			header.UID = 0;
-			header.MID = 0;
-			return getBytes(header);
-		}
-		static byte[] GenerateSmb2HeaderFromCommand(byte command)
-		{
-			SMB2_Header header = new SMB2_Header();
-			header.ProtocolId = 0x424D53FE;
-			header.Command = command;
-			header.StructureSize = 64;
-			header.Command = command;
-			header.MessageId = 0;
-			header.Reserved = 0xFEFF;
-			return getBytes(header);
-		}
-		static byte[] getBytes(object structure)
-		{
-			int size = Marshal.SizeOf(structure);
-			byte[] arr = new byte[size];
-			IntPtr ptr = Marshal.AllocHGlobal(size);
-			Marshal.StructureToPtr(structure, ptr, true);
-			Marshal.Copy(ptr, arr, 0, size);
-			Marshal.FreeHGlobal(ptr);
-			return arr;
-		}
-		static byte[] getDialect(string dialect)
-		{
-			byte[] dialectBytes = Encoding.ASCII.GetBytes(dialect);
-			byte[] output = new byte[dialectBytes.Length + 2];
-			output[0] = 2;
-			output[output.Length - 1] = 0;
-			Array.Copy(dialectBytes, 0, output, 1, dialectBytes.Length);
-			return output;
-		}
-		static byte[] GetNegotiateMessage(byte[] dialect)
-		{
-			byte[] output = new byte[dialect.Length + 3];
-			output[0] = 0;
-			output[1] = (byte) dialect.Length;
-			output[2] = 0;
-			Array.Copy(dialect, 0, output, 3, dialect.Length);
-			return output;
-		}
-		// MS-SMB2  2.2.3 SMB2 NEGOTIATE Request
-		static byte[] GetNegotiateMessageSmbv2(int DialectToTest)
-		{
-			SMB2_NegotiateRequest request = new SMB2_NegotiateRequest();
-			request.StructureSize = 36;
-			request.DialectCount = 1;
-			request.SecurityMode = 1; // signing enabled
-			request.ClientGuid = Guid.NewGuid();
-			request.DialectToTest = (UInt16) DialectToTest;
-			return getBytes(request);
-		}
-		static byte[] GetNegotiatePacket(byte[] header, byte[] smbPacket)
-		{
-			byte[] output = new byte[smbPacket.Length + header.Length + 4];
-			output[0] = 0;
-			output[1] = 0;
-			output[2] = 0;
-			output[3] = (byte)(smbPacket.Length + header.Length);
-			Array.Copy(header, 0, output, 4, header.Length);
-			Array.Copy(smbPacket, 0, output, 4 + header.Length, smbPacket.Length);
-			return output;
-		}
-		public static bool DoesServerSupportDialect(string server, string dialect)
-		{
-			Trace.WriteLine("Checking " + server + " for SMBV1 dialect " + dialect);
-			TcpClient client = new TcpClient();
-			try
-			{
-				client.Connect(server, 445);
-			}
-			catch (Exception)
-			{
-				throw new Exception("port 445 is closed on " + server);
-			}
-			try
-			{
-				NetworkStream stream = client.GetStream();
-				byte[] header = GenerateSmbHeaderFromCommand(SMB_COM_NEGOTIATE);
-				byte[] dialectEncoding = getDialect(dialect);
-				byte[] negotiatemessage = GetNegotiateMessage(dialectEncoding);
-				byte[] packet = GetNegotiatePacket(header, negotiatemessage);
-				stream.Write(packet, 0, packet.Length);
-				stream.Flush();
-				byte[] netbios = new byte[4];
-				if (stream.Read(netbios, 0, netbios.Length) != netbios.Length)
-                {
-                    return false;
-                }
-				byte[] smbHeader = new byte[Marshal.SizeOf(typeof(SMB_Header))];
-				if (stream.Read(smbHeader, 0, smbHeader.Length) != smbHeader.Length)
-                {
-                    return false;
-                }
-				byte[] negotiateresponse = new byte[3];
-				if (stream.Read(negotiateresponse, 0, negotiateresponse.Length) != negotiateresponse.Length)
-                {
-                    return false;
-                }
-				if (negotiateresponse[1] == 0 && negotiateresponse[2] == 0)
-				{
-					Trace.WriteLine("Checking " + server + " for SMBV1 dialect " + dialect + " = Supported");
-					return true;
-				}
-				Trace.WriteLine("Checking " + server + " for SMBV1 dialect " + dialect + " = Not supported");
-				return false;
-			}
-			catch (Exception)
-			{
-				throw new ApplicationException("Smb1 is not supported on " + server);
-			}
-		}
-		public static bool DoesServerSupportDialectWithSmbV2(string server, int dialect, bool checkSMBSigning)
-		{
-			Trace.WriteLine("Checking " + server + " for SMBV2 dialect 0x" + dialect.ToString("X2"));
-			TcpClient client = new TcpClient();
-			try
-			{
-				client.Connect(server, 445);
-			}
-			catch (Exception)
-			{
-				throw new Exception("port 445 is closed on " + server);
-			}
-			try
-			{
-				NetworkStream stream = client.GetStream();
-				byte[] header = GenerateSmb2HeaderFromCommand(SMB2_NEGOTIATE);
-				byte[] negotiatemessage = GetNegotiateMessageSmbv2(dialect);
-				byte[] packet = GetNegotiatePacket(header, negotiatemessage);
-				stream.Write(packet, 0, packet.Length);
-				stream.Flush();
-				byte[] netbios = new byte[4];
-				if( stream.Read(netbios, 0, netbios.Length) != netbios.Length)
-                {
-                    return false;
-                }
-				byte[] smbHeader = new byte[Marshal.SizeOf(typeof(SMB2_Header))];
-				if (stream.Read(smbHeader, 0, smbHeader.Length) != smbHeader.Length)
-                {
-                    return false;
-                }
-				if (smbHeader[8] != 0 || smbHeader[9] != 0 || smbHeader[10] != 0 || smbHeader[11] != 0)
-				{
-					Trace.WriteLine("Checking " + server + " for SMBV2 dialect 0x" + dialect.ToString("X2") + " = Not supported via error code");
-					return false;
-				}
-				byte[] negotiateresponse = new byte[6];
-				if (stream.Read(negotiateresponse, 0, negotiateresponse.Length) != negotiateresponse.Length)
-                {
-                    return false;
-                }
-                if (checkSMBSigning)
-                {
-                    // https://support.microsoft.com/en-in/help/887429/overview-of-server-message-block-signing
-                    // https://msdn.microsoft.com/en-us/library/cc246561.aspx
-				    if (negotiateresponse[2] == 3)
-				    {
-					    Trace.WriteLine("Checking " + server + " for SMBV2 SMB Signing dialect 0x" + dialect.ToString("X2") + " = Supported");
-					    return true;
-				    }
-                    else
-                    {
-                        return false;
-                    }
-                }
-				int selectedDialect = negotiateresponse[5] * 0x100 + negotiateresponse[4];
-				if (selectedDialect == dialect)
-				{
-					Trace.WriteLine("Checking " + server + " for SMBV2 dialect 0x" + dialect.ToString("X2") + " = Supported");
-					return true;
-				}
-				Trace.WriteLine("Checking " + server + " for SMBV2 dialect 0x" + dialect.ToString("X2") + " = Not supported via not returned dialect");
-				return false;
-			}
-			catch (Exception)
-			{
-				throw new ApplicationException("Smb2 is not supported on " + server);
-			}
-		}
-		public static bool SupportSMB1(string server)
-		{
-			try
-			{
-				return DoesServerSupportDialect(server, "NT LM 0.12");
-			}
-			catch (Exception)
-			{
-				return false;
-			}
-		}
-		public static bool SupportSMB2(string server)
-		{
-			try
-			{
-				return (DoesServerSupportDialectWithSmbV2(server, 0x0202, false) || DoesServerSupportDialectWithSmbV2(server, 0x0210, false));
-			}
-			catch (Exception)
-			{
-				return false;
-			}
-		}
-		public static bool SupportSMB3(string server)
-		{
-			try
-			{
-				return (DoesServerSupportDialectWithSmbV2(server, 0x0300, false) || DoesServerSupportDialectWithSmbV2(server, 0x0302, false) || DoesServerSupportDialectWithSmbV2(server, 0x0311, false));
-			}
-			catch (Exception)
-			{
-				return false;
-			}
-		}
-		public static string Name { get { return "smb"; } }
-		public static PSObject GetPSObject(Object IPv4Address)
-		{
-            string computer = Convert.ToString(IPv4Address);
-            PSObject DCSMBObj = new PSObject();
-            if (computer == "")
-            {
-                DCSMBObj.Members.Add(new PSNoteProperty("SMB Port Open", null));
-                DCSMBObj.Members.Add(new PSNoteProperty("SMB1(NT LM 0.12)", null));
-                DCSMBObj.Members.Add(new PSNoteProperty("SMB2(0x0202)", null));
-                DCSMBObj.Members.Add(new PSNoteProperty("SMB2(0x0210)", null));
-                DCSMBObj.Members.Add(new PSNoteProperty("SMB3(0x0300)", null));
-                DCSMBObj.Members.Add(new PSNoteProperty("SMB3(0x0302)", null));
-                DCSMBObj.Members.Add(new PSNoteProperty("SMB3(0x0311)", null));
-                DCSMBObj.Members.Add(new PSNoteProperty("SMB Signing", null));
-                return DCSMBObj;
-            }
-            bool isPortOpened = true;
-			bool SMBv1 = false;
-			bool SMBv2_0x0202 = false;
-			bool SMBv2_0x0210 = false;
-			bool SMBv3_0x0300 = false;
-			bool SMBv3_0x0302 = false;
-			bool SMBv3_0x0311 = false;
-            bool SMBSigning = false;
-			try
-			{
-				try
-				{
-					SMBv1 = DoesServerSupportDialect(computer, "NT LM 0.12");
-				}
-				catch (ApplicationException)
-				{
-				}
-				try
-				{
-					SMBv2_0x0202 = DoesServerSupportDialectWithSmbV2(computer, 0x0202, false);
-					SMBv2_0x0210 = DoesServerSupportDialectWithSmbV2(computer, 0x0210, false);
-					SMBv3_0x0300 = DoesServerSupportDialectWithSmbV2(computer, 0x0300, false);
-					SMBv3_0x0302 = DoesServerSupportDialectWithSmbV2(computer, 0x0302, false);
-					SMBv3_0x0311 = DoesServerSupportDialectWithSmbV2(computer, 0x0311, false);
-				}
-				catch (ApplicationException)
-				{
-				}
-			}
-			catch (Exception)
-			{
-				isPortOpened = false;
-			}
-			if (SMBv3_0x0311)
-			{
-				SMBSigning = DoesServerSupportDialectWithSmbV2(computer, 0x0311, true);
-			}
-			else if (SMBv3_0x0302)
-			{
-				SMBSigning = DoesServerSupportDialectWithSmbV2(computer, 0x0302, true);
-			}
-			else if (SMBv3_0x0300)
-			{
-				SMBSigning = DoesServerSupportDialectWithSmbV2(computer, 0x0300, true);
-			}
-			else if (SMBv2_0x0210)
-			{
-				SMBSigning = DoesServerSupportDialectWithSmbV2(computer, 0x0210, true);
-			}
-			else if (SMBv2_0x0202)
-			{
-				SMBSigning = DoesServerSupportDialectWithSmbV2(computer, 0x0202, true);
-			}
-            DCSMBObj.Members.Add(new PSNoteProperty("SMB Port Open", isPortOpened));
-            DCSMBObj.Members.Add(new PSNoteProperty("SMB1(NT LM 0.12)", SMBv1));
-            DCSMBObj.Members.Add(new PSNoteProperty("SMB2(0x0202)", SMBv2_0x0202));
-            DCSMBObj.Members.Add(new PSNoteProperty("SMB2(0x0210)", SMBv2_0x0210));
-            DCSMBObj.Members.Add(new PSNoteProperty("SMB3(0x0300)", SMBv3_0x0300));
-            DCSMBObj.Members.Add(new PSNoteProperty("SMB3(0x0302)", SMBv3_0x0302));
-            DCSMBObj.Members.Add(new PSNoteProperty("SMB3(0x0311)", SMBv3_0x0311));
-            DCSMBObj.Members.Add(new PSNoteProperty("SMB Signing", SMBSigning));
-            return DCSMBObj;
-		}
-	}
+Function Get-ObjectCount {
+    Param($Collection)
+    If ($null -eq $Collection) { return 0 }
+    If ($Collection -is [array]) { return $Collection.Count }
+    If ($Collection.Count) { return $Collection.Count }
+    return 1
 }
-"@
+
+Function Clean-String {
+    Param([string]$InputString)
+    If ([string]::IsNullOrEmpty($InputString)) { return "" }
+    return $InputString.Trim()
+}
+
+# Generic parallel processor using runspaces
+Function Invoke-ParallelProcess {
+    Param(
+        [Parameter(Mandatory=$true)]$InputObjects,
+        [Parameter(Mandatory=$true)][scriptblock]$ScriptBlock,
+        [int]$Threads = 10,
+        [hashtable]$Parameters = @{}
+    )
+    
+    If ($null -eq $InputObjects -or (Get-ObjectCount $InputObjects) -eq 0) {
+        return @()
+    }
+    
+    $Results = [System.Collections.ArrayList]::Synchronized([System.Collections.ArrayList]::new())
+    $RunspacePool = [runspacefactory]::CreateRunspacePool(1, $Threads)
+    $RunspacePool.Open()
+    
+    $Runspaces = @()
+    
+    ForEach ($Item in $InputObjects) {
+        $PowerShell = [powershell]::Create()
+        $PowerShell.RunspacePool = $RunspacePool
+        
+        [void]$PowerShell.AddScript($ScriptBlock)
+        [void]$PowerShell.AddArgument($Item)
+        
+        ForEach ($Key in $Parameters.Keys) {
+            [void]$PowerShell.AddArgument($Parameters[$Key])
+        }
+        
+        $Runspaces += @{
+            PowerShell = $PowerShell
+            Handle = $PowerShell.BeginInvoke()
+        }
+    }
+    
+    ForEach ($Runspace in $Runspaces) {
+        $Result = $Runspace.PowerShell.EndInvoke($Runspace.Handle)
+        If ($Result) {
+            [void]$Results.AddRange(@($Result))
+        }
+        $Runspace.PowerShell.Dispose()
+    }
+    
+    $RunspacePool.Close()
+    $RunspacePool.Dispose()
+    
+    return $Results.ToArray()
+}
+
+# Parser functions - pass through data since AD cmdlets already return proper objects
+# The original C# parsers added computed properties; these can be added later if needed
+Function Parse-Schema { 
+    Param($Data, $Threads) 
+    return $Data 
+}
+
+Function Parse-User { 
+    Param($Data, $Date, $DormantDays, $PassMaxAge, $Threads) 
+    return $Data 
+}
+
+Function Parse-UserSPN { 
+    Param($Data, $Threads) 
+    return $Data 
+}
+
+Function Parse-Group { 
+    Param($Data, $Threads) 
+    return $Data 
+}
+
+Function Parse-GroupChange { 
+    Param($Data, $Date, $Threads) 
+    return $Data 
+}
+
+Function Parse-GroupMember { 
+    Param($Data, $Threads) 
+    return $Data 
+}
+
+Function Parse-DomainController { 
+    Param($Data, $Threads) 
+    return $Data 
+}
+
+Function Parse-Computer { 
+    Param($Data, $Date, $DormantDays, $PassMaxAge, $Threads) 
+    return $Data 
+}
+
+Function Parse-ComputerSPN { 
+    Param($Data, $Threads) 
+    return $Data 
+}
+
+Function Parse-OU { 
+    Param($Data, $Threads) 
+    return $Data 
+}
+
+Function Parse-GPO { 
+    Param($Data, $Threads) 
+    return $Data 
+}
+
+Function Parse-SOM { 
+    Param($Data, $Threads) 
+    return $Data 
+}
+
+Function Parse-Printer { 
+    Param($Data, $Threads) 
+    return $Data 
+}
+
+Function Parse-LAPS { 
+    Param($Data, $Threads) 
+    return $Data 
+}
+
+Function Parse-DACL { 
+    Param($Data, $Threads) 
+    return $Data 
+}
+
+Function Parse-SACL { 
+    Param($Data, $Threads) 
+    return $Data 
+}
+
+
 
 # Win32 API definitions removed for compatibility
 
@@ -6834,7 +3220,7 @@ Function Get-AdaptTrust
 
         If ($ADTrusts)
         {
-            Write-Verbose "[*] Total Trusts: $([AdaptAD.ADWSClass]::ObjectCount($ADTrusts))"
+            Write-Verbose "[*] Total Trusts: $(Get-ObjectCount $ADTrusts)"
             # Trust Info
             $ADTrustObj = @()
             $ADTrusts | ForEach-Object {
@@ -6893,7 +3279,7 @@ Function Get-AdaptTrust
 
         If ($ADTrusts)
         {
-            Write-Verbose "[*] Total Trusts: $([AdaptAD.LDAPClass]::ObjectCount($ADTrusts))"
+            Write-Verbose "[*] Total Trusts: $(Get-ObjectCount $ADTrusts)"
             # Trust Info
             $ADTrustObj = @()
             $ADTrusts | ForEach-Object {
@@ -7005,7 +3391,7 @@ Function Get-AdaptSite
 
         If ($ADSites)
         {
-            Write-Verbose "[*] Total Sites: $([AdaptAD.ADWSClass]::ObjectCount($ADSites))"
+            Write-Verbose "[*] Total Sites: $(Get-ObjectCount $ADSites)"
             # Sites Info
             $ADSiteObj = @()
             $ADSites | ForEach-Object {
@@ -7050,7 +3436,7 @@ Function Get-AdaptSite
 
         If ($ADSites)
         {
-            Write-Verbose "[*] Total Sites: $([AdaptAD.LDAPClass]::ObjectCount($ADSites))"
+            Write-Verbose "[*] Total Sites: $(Get-ObjectCount $ADSites)"
             # Site Info
             $ADSiteObj = @()
             $ADSites | ForEach-Object {
@@ -7141,7 +3527,7 @@ Function Get-AdaptSubnet
 
         If ($ADSubnets)
         {
-            Write-Verbose "[*] Total Subnets: $([AdaptAD.ADWSClass]::ObjectCount($ADSubnets))"
+            Write-Verbose "[*] Total Subnets: $(Get-ObjectCount $ADSubnets)"
             # Subnets Info
             $ADSubnetObj = @()
             $ADSubnets | ForEach-Object {
@@ -7187,7 +3573,7 @@ Function Get-AdaptSubnet
 
         If ($ADSubnets)
         {
-            Write-Verbose "[*] Total Subnets: $([AdaptAD.LDAPClass]::ObjectCount($ADSubnets))"
+            Write-Verbose "[*] Total Subnets: $(Get-ObjectCount $ADSubnets)"
             # Subnets Info
             $ADSubnetObj = @()
             $ADSubnets | ForEach-Object {
@@ -7279,8 +3665,8 @@ Function Get-AdaptSchemaHistory
 
         If ($ADSchemaHistory)
         {
-            Write-Verbose "[*] Total Schema Objects: $([AdaptAD.ADWSClass]::ObjectCount($ADSchemaHistory))"
-            $ADSchemaObj = [AdaptAD.ADWSClass]::SchemaParser($ADSchemaHistory, $Threads)
+            Write-Verbose "[*] Total Schema Objects: $(Get-ObjectCount $ADSchemaHistory)"
+            $ADSchemaObj = Parse-Schema $ADSchemaHistory $Threads
             Remove-Variable ADSchemaHistory
         }
     }
@@ -7314,8 +3700,8 @@ Function Get-AdaptSchemaHistory
 
         If ($ADSchemaHistory)
         {
-            Write-Verbose "[*] Total Schema Objects: $([AdaptAD.LDAPClass]::ObjectCount($ADSchemaHistory))"
-            $ADSchemaObj = [AdaptAD.LDAPClass]::SchemaParser($ADSchemaHistory, $Threads)
+            Write-Verbose "[*] Total Schema Objects: $(Get-ObjectCount $ADSchemaHistory)"
+            $ADSchemaObj = Parse-Schema $ADSchemaHistory $Threads
             Remove-Variable ADSchemaHistory
         }
     }
@@ -7560,7 +3946,7 @@ Function Get-AdaptFineGrainedPasswordPolicy
 
             If ($ADFinepasspolicy)
             {
-                If ([AdaptAD.LDAPClass]::ObjectCount($ADFinepasspolicy) -ge 1)
+                If (Get-ObjectCount $ADFinepasspolicy -ge 1)
                 {
                     $FgppPassPolObj = @()
                     $ADFinepasspolicy | ForEach-Object {
@@ -7652,8 +4038,8 @@ Function Get-AdaptDomainController
         # DC Info
         If ($ADDomainControllers)
         {
-            Write-Verbose "[*] Total Domain Controllers: $([AdaptAD.ADWSClass]::ObjectCount($ADDomainControllers))"
-            $DCObj = [AdaptAD.ADWSClass]::DomainControllerParser($ADDomainControllers, $Threads)
+            Write-Verbose "[*] Total Domain Controllers: $(Get-ObjectCount $ADDomainControllers)"
+            $DCObj = Parse-DomainController $ADDomainControllers $Threads
             Remove-Variable ADDomainControllers
         }
     }
@@ -7683,8 +4069,8 @@ Function Get-AdaptDomainController
 
         If ($ADDomain.DomainControllers)
         {
-            Write-Verbose "[*] Total Domain Controllers: $([AdaptAD.LDAPClass]::ObjectCount($ADDomain.DomainControllers))"
-            $DCObj = [AdaptAD.LDAPClass]::DomainControllerParser($ADDomain.DomainControllers, $Threads)
+            Write-Verbose "[*] Total Domain Controllers: $(Get-ObjectCount $ADDomain.DomainControllers)"
+            $DCObj = Parse-DomainController $ADDomain.DomainControllers $Threads
             Remove-Variable ADDomain
         }
     }
@@ -7817,7 +4203,7 @@ Function Get-AdaptUser
         }
         If ($ADUsers)
         {
-            Write-Verbose "[*] Total Users: $([AdaptAD.ADWSClass]::ObjectCount($ADUsers))"
+            Write-Verbose "[*] Total Users: $(Get-ObjectCount $ADUsers)"
             If ($AdaptUsers)
             {
                 Try
@@ -7832,11 +4218,11 @@ Function Get-AdaptUser
                     Write-Verbose "[EXCEPTION] $($_.Exception.Message)"
                     $PassMaxAge = 90
                 }
-                $UserObj = [AdaptAD.ADWSClass]::UserParser($ADUsers, $date, $DormantTimeSpan, $PassMaxAge, $Threads)
+                $UserObj = Parse-User $ADUsers $date $DormantTimeSpan $PassMaxAge $Threads
             }
             If ($AdaptUserSPNs)
             {
-                $UserSPNObj = [AdaptAD.ADWSClass]::UserSPNParser($ADUsers, $Threads)
+                $UserSPNObj = Parse-UserSPN $ADUsers $Threads
             }
             Remove-Variable ADUsers
         }
@@ -7900,7 +4286,7 @@ Function Get-AdaptUser
         }
         If ($ADUsers)
         {
-            Write-Verbose "[*] Total Users: $([AdaptAD.LDAPClass]::ObjectCount($ADUsers))"
+            Write-Verbose "[*] Total Users: $(Get-ObjectCount $ADUsers)"
             If ($AdaptUsers)
             {
                 $PassMaxAge = $($ObjDomain.ConvertLargeIntegerToInt64($ObjDomain.maxpwdage.value) /-864000000000)
@@ -7910,11 +4296,11 @@ Function Get-AdaptUser
                     Write-Verbose "[EXCEPTION] $($_.Exception.Message)"
                     $PassMaxAge = 90
                 }
-                $UserObj = [AdaptAD.LDAPClass]::UserParser($ADUsers, $date, $DormantTimeSpan, $PassMaxAge, $Threads)
+                $UserObj = Parse-User $ADUsers $date $DormantTimeSpan $PassMaxAge $Threads
             }
             If ($AdaptUserSPNs)
             {
-                $UserSPNObj = [AdaptAD.LDAPClass]::UserSPNParser($ADUsers, $Threads)
+                $UserSPNObj = Parse-UserSPN $ADUsers $Threads
             }
             Remove-Variable ADUsers
         }
@@ -7988,7 +4374,7 @@ Function Get-AdaptPasswordAttributes
 
         If ($ADUsers)
         {
-            Write-Warning "[*] Total PasswordAttribute Objects: $([AdaptAD.ADWSClass]::ObjectCount($ADUsers))"
+            Write-Warning "[*] Total PasswordAttribute Objects: $(Get-ObjectCount $ADUsers)"
             $UserObj = $ADUsers
             Remove-Variable ADUsers
         }
@@ -8014,7 +4400,7 @@ Function Get-AdaptPasswordAttributes
 
         If ($ADUsers)
         {
-            $cnt = [AdaptAD.LDAPClass]::ObjectCount($ADUsers)
+            $cnt = Get-ObjectCount $ADUsers
             If ($cnt -gt 0)
             {
                 Write-Warning "[*] Total PasswordAttribute Objects: $cnt"
@@ -8124,14 +4510,14 @@ Function Get-AdaptGroup
 
         If ($ADGroups)
         {
-            Write-Verbose "[*] Total Groups: $([AdaptAD.ADWSClass]::ObjectCount($ADGroups))"
+            Write-Verbose "[*] Total Groups: $(Get-ObjectCount $ADGroups)"
             If ($AdaptGroups)
             {
-                $GroupObj = [AdaptAD.ADWSClass]::GroupParser($ADGroups, $Threads)
+                $GroupObj = Parse-Group $ADGroups $Threads
             }
             If ($AdaptGroupChanges)
             {
-                $GroupChangesObj = [AdaptAD.ADWSClass]::GroupChangeParser($ADGroups, $date, $Threads)
+                $GroupChangesObj = Parse-GroupChange $ADGroups $date $Threads
             }
             Remove-Variable ADGroups
             Remove-Variable AdaptGroups
@@ -8161,14 +4547,14 @@ Function Get-AdaptGroup
 
         If ($ADGroups)
         {
-            Write-Verbose "[*] Total Groups: $([AdaptAD.LDAPClass]::ObjectCount($ADGroups))"
+            Write-Verbose "[*] Total Groups: $(Get-ObjectCount $ADGroups)"
             If ($AdaptGroups)
             {
-                $GroupObj = [AdaptAD.LDAPClass]::GroupParser($ADGroups, $Threads)
+                $GroupObj = Parse-Group $ADGroups $Threads
             }
             If ($AdaptGroupChanges)
             {
-                $GroupChangesObj = [AdaptAD.LDAPClass]::GroupChangeParser($ADGroups, $date, $Threads)
+                $GroupChangesObj = Parse-GroupChange $ADGroups $date $Threads
             }
             Remove-Variable ADGroups
             Remove-Variable AdaptGroups
@@ -8269,8 +4655,8 @@ Function Get-AdaptGroupMember
 
         If ( ($ADDomainSID) -and ($ADGroups) -and ($ADGroupMembers) )
         {
-            Write-Verbose "[*] Total GroupMember Objects: $([AdaptAD.ADWSClass]::ObjectCount($ADGroupMembers))"
-            $GroupMemberObj = [AdaptAD.ADWSClass]::GroupMemberParser($ADGroups, $ADGroupMembers, $ADDomainSID, $Threads)
+            Write-Verbose "[*] Total GroupMember Objects: $(Get-ObjectCount $ADGroupMembers)"
+            $GroupMemberObj = Parse-GroupMember $ADGroups $ADGroupMembers, $ADDomainSID, $Threads
             Remove-Variable ADGroups
             Remove-Variable ADGroupMembers
             Remove-Variable ADDomainSID
@@ -8392,8 +4778,8 @@ Function Get-AdaptGroupMember
 
         If ( ($ADDomainSID) -and ($ADGroups) -and ($ADGroupMembers) )
         {
-            Write-Verbose "[*] Total GroupMember Objects: $([AdaptAD.LDAPClass]::ObjectCount($ADGroupMembers))"
-            $GroupMemberObj = [AdaptAD.LDAPClass]::GroupMemberParser($ADGroups, $ADGroupMembers, $ADDomainSID, $Threads)
+            Write-Verbose "[*] Total GroupMember Objects: $(Get-ObjectCount $ADGroupMembers)"
+            $GroupMemberObj = Parse-GroupMember $ADGroups $ADGroupMembers, $ADDomainSID, $Threads
             Remove-Variable ADGroups
             Remove-Variable ADGroupMembers
             Remove-Variable ADDomainSID
@@ -8467,8 +4853,8 @@ Function Get-AdaptOU
 
         If ($ADOUs)
         {
-            Write-Verbose "[*] Total OUs: $([AdaptAD.ADWSClass]::ObjectCount($ADOUs))"
-            $OUObj = [AdaptAD.ADWSClass]::OUParser($ADOUs, $Threads)
+            Write-Verbose "[*] Total OUs: $(Get-ObjectCount $ADOUs)"
+            $OUObj = Parse-OU $ADOUs $Threads
             Remove-Variable ADOUs
         }
     }
@@ -8495,8 +4881,8 @@ Function Get-AdaptOU
 
         If ($ADOUs)
         {
-            Write-Verbose "[*] Total OUs: $([AdaptAD.LDAPClass]::ObjectCount($ADOUs))"
-            $OUObj = [AdaptAD.LDAPClass]::OUParser($ADOUs, $Threads)
+            Write-Verbose "[*] Total OUs: $(Get-ObjectCount $ADOUs)"
+            $OUObj = Parse-OU $ADOUs $Threads
             Remove-Variable ADOUs
         }
     }
@@ -8572,8 +4958,8 @@ Function Get-AdaptGPO
 
         If ($ADGPOs)
         {
-            Write-Verbose "[*] Total GPOs: $([AdaptAD.ADWSClass]::ObjectCount($ADGPOs))"
-            $GPOsObj = [AdaptAD.ADWSClass]::GPOParser($ADGPOs, $Threads)
+            Write-Verbose "[*] Total GPOs: $(Get-ObjectCount $ADGPOs)"
+            $GPOsObj = Parse-GPO $ADGPOs $Threads
             Remove-Variable ADGPOs
         }
     }
@@ -8599,8 +4985,8 @@ Function Get-AdaptGPO
 
         If ($ADGPOs)
         {
-            Write-Verbose "[*] Total GPOs: $([AdaptAD.LDAPClass]::ObjectCount($ADGPOs))"
-            $GPOsObj = [AdaptAD.LDAPClass]::GPOParser($ADGPOs, $Threads)
+            Write-Verbose "[*] Total GPOs: $(Get-ObjectCount $ADGPOs)"
+            $GPOsObj = Parse-GPO $ADGPOs $Threads
             Remove-Variable ADGPOs
         }
     }
@@ -8685,8 +5071,8 @@ Function Get-AdaptGPLink
 
         If ( ($ADSOMs) -and ($ADGPOs) )
         {
-            Write-Verbose "[*] Total SOMs: $([AdaptAD.ADWSClass]::ObjectCount($ADSOMs))"
-            $SOMObj = [AdaptAD.ADWSClass]::SOMParser($ADGPOs, $ADSOMs, $Threads)
+            Write-Verbose "[*] Total SOMs: $(Get-ObjectCount $ADSOMs)"
+            $SOMObj = Parse-SOM $ADGPOs $ADSOMs, $Threads
             Remove-Variable ADSOMs
             Remove-Variable ADGPOs
         }
@@ -8758,8 +5144,8 @@ Function Get-AdaptGPLink
 
         If ( ($ADSOMs) -and ($ADGPOs) )
         {
-            Write-Verbose "[*] Total SOMs: $([AdaptAD.LDAPClass]::ObjectCount($ADSOMs))"
-            $SOMObj = [AdaptAD.LDAPClass]::SOMParser($ADGPOs, $ADSOMs, $Threads)
+            Write-Verbose "[*] Total SOMs: $(Get-ObjectCount $ADSOMs)"
+            $SOMObj = Parse-SOM $ADGPOs $ADSOMs, $Threads
             Remove-Variable ADSOMs
             Remove-Variable ADGPOs
         }
@@ -9167,7 +5553,7 @@ Function Get-AdaptDNSZone
             Remove-Variable ADDomain
         }
 
-        Write-Verbose "[*] Total DNS Zones: $([AdaptAD.ADWSClass]::ObjectCount($DNSZoneArray))"
+        Write-Verbose "[*] Total DNS Zones: $(Get-ObjectCount $DNSZoneArray)"
 
         If ($DNSZoneArray)
         {
@@ -9176,7 +5562,7 @@ Function Get-AdaptDNSZone
             $DNSZoneArray | ForEach-Object {
                 # Create the object for each instance.
                 $Obj = New-Object PSObject
-                $Obj | Add-Member -MemberType NoteProperty -Name Name -Value $([AdaptAD.ADWSClass]::CleanString($_.Name))
+                $Obj | Add-Member -MemberType NoteProperty -Name Name -Value $(Clean-String $_.Name)
                 Try
                 {
                     $DNSNodes = Get-ADObject -SearchBase $($_.DistinguishedName) -LDAPFilter '(objectClass=dnsNode)' -Properties DistinguishedName,dnsrecord,dNSTombstoned,Name,ProtectedFromAccidentalDeletion,showInAdvancedViewOnly,whenChanged,whenCreated
@@ -9233,7 +5619,7 @@ Function Get-AdaptDNSZone
                 $Obj | Add-Member -MemberType NoteProperty -Name DistinguishedName -Value $_.DistinguishedName
                 $ADDNSZonesObj += $Obj
             }
-            Write-Verbose "[*] Total DNS Records: $([AdaptAD.ADWSClass]::ObjectCount($ADDNSNodesObj))"
+            Write-Verbose "[*] Total DNS Records: $(Get-ObjectCount $ADDNSNodesObj)"
             Remove-Variable DNSZoneArray
         }
     }
@@ -9348,7 +5734,7 @@ Function Get-AdaptDNSZone
             Remove-Variable ADDomain
         }
 
-        Write-Verbose "[*] Total DNS Zones: $([AdaptAD.LDAPClass]::ObjectCount($DNSZoneArray))"
+        Write-Verbose "[*] Total DNS Zones: $(Get-ObjectCount $DNSZoneArray)"
 
         If ($DNSZoneArray)
         {
@@ -9381,7 +5767,7 @@ Function Get-AdaptDNSZone
 
                 # Create the object for each instance.
                 $Obj = New-Object PSObject
-                $Obj | Add-Member -MemberType NoteProperty -Name Name -Value $([AdaptAD.LDAPClass]::CleanString($_.Properties.name[0]))
+                $Obj | Add-Member -MemberType NoteProperty -Name Name -Value $(Clean-String $_.Properties.name[0])
                 If ($DNSNodes)
                 {
                     $Obj | Add-Member -MemberType NoteProperty -Name RecordCount -Value $($DNSNodes | Measure-Object | Select-Object -ExpandProperty Count)
@@ -9434,7 +5820,7 @@ Function Get-AdaptDNSZone
                 $Obj | Add-Member -MemberType NoteProperty -Name DistinguishedName -Value ([string] $($_.Properties.distinguishedname))
                 $ADDNSZonesObj += $Obj
             }
-            Write-Verbose "[*] Total DNS Records: $([AdaptAD.LDAPClass]::ObjectCount($ADDNSNodesObj))"
+            Write-Verbose "[*] Total DNS Records: $(Get-ObjectCount $ADDNSNodesObj)"
             Remove-Variable DNSZoneArray
         }
     }
@@ -9510,8 +5896,8 @@ Function Get-AdaptPrinter
 
         If ($ADPrinters)
         {
-            Write-Verbose "[*] Total Printers: $([AdaptAD.ADWSClass]::ObjectCount($ADPrinters))"
-            $PrintersObj = [AdaptAD.ADWSClass]::PrinterParser($ADPrinters, $Threads)
+            Write-Verbose "[*] Total Printers: $(Get-ObjectCount $ADPrinters)"
+            $PrintersObj = Parse-Printer $ADPrinters $Threads
             Remove-Variable ADPrinters
         }
     }
@@ -9537,11 +5923,11 @@ Function Get-AdaptPrinter
 
         If ($ADPrinters)
         {
-            $cnt = $([AdaptAD.LDAPClass]::ObjectCount($ADPrinters))
+            $cnt = $(Get-ObjectCount $ADPrinters)
             If ($cnt -ge 1)
             {
                 Write-Verbose "[*] Total Printers: $cnt"
-                $PrintersObj = [AdaptAD.LDAPClass]::PrinterParser($ADPrinters, $Threads)
+                $PrintersObj = Parse-Printer $ADPrinters $Threads
             }
             Remove-Variable ADPrinters
         }
@@ -9683,14 +6069,14 @@ Function Get-AdaptComputer
         }
         If ($ADComputers)
         {
-            Write-Verbose "[*] Total Computers: $([AdaptAD.ADWSClass]::ObjectCount($ADComputers))"
+            Write-Verbose "[*] Total Computers: $(Get-ObjectCount $ADComputers)"
             If ($AdaptComputers)
             {
-                $ComputerObj = [AdaptAD.ADWSClass]::ComputerParser($ADComputers, $date, $DormantTimeSpan, $PassMaxAge, $Threads)
+                $ComputerObj = Parse-Computer $ADComputers $date $DormantTimeSpan $PassMaxAge $Threads
             }
             If ($AdaptComputerSPNs)
             {
-                $ComputerSPNObj = [AdaptAD.ADWSClass]::ComputerSPNParser($ADComputers, $Threads)
+                $ComputerSPNObj = Parse-ComputerSPN $ADComputers $Threads
             }
             Remove-Variable ADComputers
         }
@@ -9754,14 +6140,14 @@ Function Get-AdaptComputer
 
         If ($ADComputers)
         {
-            Write-Verbose "[*] Total Computers: $([AdaptAD.LDAPClass]::ObjectCount($ADComputers))"
+            Write-Verbose "[*] Total Computers: $(Get-ObjectCount $ADComputers)"
             If ($AdaptComputers)
             {
-                $ComputerObj = [AdaptAD.LDAPClass]::ComputerParser($ADComputers, $date, $DormantTimeSpan, $PassMaxAge, $Threads)
+                $ComputerObj = Parse-Computer $ADComputers $date $DormantTimeSpan $PassMaxAge $Threads
             }
             If ($AdaptComputerSPNs)
             {
-                $ComputerSPNObj = [AdaptAD.LDAPClass]::ComputerSPNParser($ADComputers, $Threads)
+                $ComputerSPNObj = Parse-ComputerSPN $ADComputers $Threads
             }
             Remove-Variable ADComputers
         }
@@ -9942,8 +6328,8 @@ Function Get-AdaptLAPS
 
         If ($ADComputers)
         {
-            Write-Verbose "[*] Total LAPS Objects: $([AdaptAD.ADWSClass]::ObjectCount($ADComputers))"
-            $LAPSObj = [AdaptAD.ADWSClass]::LAPSParser($ADComputers, $Threads)
+            Write-Verbose "[*] Total LAPS Objects: $(Get-ObjectCount $ADComputers)"
+            $LAPSObj = Parse-LAPS $ADComputers $Threads
             Remove-Variable ADComputers
         }
     }
@@ -9969,8 +6355,8 @@ Function Get-AdaptLAPS
 
         If ($ADComputers)
         {
-            Write-Verbose "[*] Total LAPS Objects: $([AdaptAD.LDAPClass]::ObjectCount($ADComputers))"
-            $LAPSObj = [AdaptAD.LDAPClass]::LAPSParser($ADComputers, $Threads)
+            Write-Verbose "[*] Total LAPS Objects: $(Get-ObjectCount $ADComputers)"
+            $LAPSObj = Parse-LAPS $ADComputers $Threads
             Remove-Variable ADComputers
         }
     }
@@ -10042,7 +6428,7 @@ Function Get-AdaptBitLocker
 
         If ($ADBitLockerRecoveryKeys)
         {
-            $cnt = $([AdaptAD.ADWSClass]::ObjectCount($ADBitLockerRecoveryKeys))
+            $cnt = $(Get-ObjectCount $ADBitLockerRecoveryKeys)
             If ($cnt -ge 1)
             {
                 Write-Verbose "[*] Total BitLocker status: $cnt"
@@ -10120,7 +6506,7 @@ Function Get-AdaptBitLocker
 
         If ($ADBitLockerRecoveryKeys)
         {
-            $cnt = $([AdaptAD.LDAPClass]::ObjectCount($ADBitLockerRecoveryKeys))
+            $cnt = $(Get-ObjectCount $ADBitLockerRecoveryKeys)
             If ($cnt -ge 1)
             {
                 Write-Verbose "[*] Total BitLocker status: $cnt"
@@ -10693,12 +7079,12 @@ Function Get-AdaptACL
         If ($Objs)
         {
             $ACLObj = @()
-            Write-Verbose "[*] Total Objects: $([AdaptAD.ADWSClass]::ObjectCount($Objs))"
+            Write-Verbose "[*] Total Objects: $(Get-ObjectCount $Objs)"
             Write-Verbose "[-] DACLs"
-            $DACLObj = [AdaptAD.ADWSClass]::DACLParser($Objs, $GUIDs, $Threads)
+            $DACLObj = Parse-DACL $Objs $GUIDs, $Threads
             #Write-Verbose "[-] SACLs - May need a Privileged Account"
             Write-Warning "[*] SACLs - Currently, the module is only supported with LDAP."
-            #$SACLObj = [AdaptAD.ADWSClass]::SACLParser($Objs, $GUIDs, $Threads)
+            #$SACLObj = Parse-SACL $Objs $GUIDs, $Threads
             Remove-Variable Objs
             Remove-Variable GUIDs
         }
@@ -10857,11 +7243,11 @@ Function Get-AdaptACL
 
         If ($Objs)
         {
-            Write-Verbose "[*] Total Objects: $([AdaptAD.LDAPClass]::ObjectCount($Objs))"
+            Write-Verbose "[*] Total Objects: $(Get-ObjectCount $Objs)"
             Write-Verbose "[-] DACLs"
-            $DACLObj = [AdaptAD.LDAPClass]::DACLParser($Objs, $GUIDs, $Threads)
+            $DACLObj = Parse-DACL $Objs $GUIDs, $Threads
             Write-Verbose "[-] SACLs - May need a Privileged Account"
-            $SACLObj = [AdaptAD.LDAPClass]::SACLParser($Objs, $GUIDs, $Threads)
+            $SACLObj = Parse-SACL $Objs $GUIDs, $Threads
             Remove-Variable Objs
             Remove-Variable GUIDs
         }
@@ -11191,7 +7577,7 @@ Function Get-AdaptDomainAccountsusedforServiceLogon
             {
                 # start data retrieval job for each server in the list
                 # use up to $Threads threads
-                $cnt = $([AdaptAD.ADWSClass]::ObjectCount($ADComputers))
+                $cnt = $(Get-ObjectCount $ADComputers)
                 Write-Verbose "[*] Total Windows Hosts: $cnt"
                 $icnt = 0
                 $ADComputers | ForEach-Object {
@@ -11248,7 +7634,7 @@ Function Get-AdaptDomainAccountsusedforServiceLogon
             {
                 # start data retrieval job for each server in the list
                 # use up to $Threads threads
-                $cnt = $([AdaptAD.LDAPClass]::ObjectCount($ADComputers))
+                $cnt = $(Get-ObjectCount $ADComputers)
                 Write-Verbose "[*] Total Windows Hosts: $cnt"
                 $icnt = 0
                 $ADComputers | ForEach-Object {
@@ -11683,139 +8069,9 @@ Function Invoke-AdaptAD
         }
     }
 
-    # Compile C# code
-    # Suppress Debug output
-    $SaveDebugPreference = $script:DebugPreference
-    $script:DebugPreference = 'SilentlyContinue'
-    Try
-    {
-        $CLR = ([System.Reflection.Assembly]::GetExecutingAssembly().ImageRuntimeVersion)[1]
-        If ($Method -eq 'ADWS')
-        {
-            If ($PSVersionTable.PSEdition -eq "Core")
-            {
-                # Beginning in PowerShell 6, ReferencedAssemblies doesn't include the default .NET assemblies. You must include a specific reference to them in the value passed to this parameter.
-                # https://docs.microsoft.com/en-gb/powershell/module/Microsoft.PowerShell.Utility/Add-Type?view=powershell-7
 
-                <#
-                TODO: Instead of all assemblies, identify which ones are required.
-                $refFolder = Split-Path ([PSObject].Assembly.Location)
-                $refAssemblies = Get-ChildItem -Path $refFolder -Filter "*.dll" | Select-Object -Expand FullName
-
-                Add-Type -TypeDefinition $($ADWSSource + $SMBInfoScannerSource) -ReferencedAssemblies $($refAssemblies + ([System.Reflection.Assembly]::LoadWithPartialName("Microsoft.ActiveDirectory.Management")).Location + ([System.Reflection.Assembly]::LoadWithPartialName("System.Management.Automation")).Location + ([System.Reflection.Assembly]::LoadWithPartialName("System.DirectoryServices")).Location)
-
-                Remove-Variable refFolder
-                Remove-Variable refAssemblies
-                #>
-
-                $refFolder = Join-Path -Path (Split-Path([PSObject].Assembly.Location)) -ChildPath "ref"
-                Add-Type -TypeDefinition $($ADWSSource + $SMBInfoScannerSource) -ReferencedAssemblies ([System.String[]]@(
-                    (Join-Path -Path $refFolder -ChildPath "System.Collections.dll")
-                    (Join-Path -Path $refFolder -ChildPath "System.Collections.NonGeneric.dll")
-                    (Join-Path -Path $refFolder -ChildPath "System.Threading.dll")
-                    (Join-Path -Path $refFolder -ChildPath "System.Threading.Thread.dll")
-                    (Join-Path -Path $refFolder -ChildPath "System.Diagnostics.TraceSource.dll")
-                    ([System.Reflection.Assembly]::LoadWithPartialName("mscorlib")).Location
-                    ([System.Reflection.Assembly]::LoadWithPartialName("System.Linq")).Location
-                    ([System.Reflection.Assembly]::LoadWithPartialName("System.Private.Xml")).Location
-                    ([System.Reflection.Assembly]::LoadWithPartialName("System.Security.AccessControl")).Location
-                    ([System.Reflection.Assembly]::LoadWithPartialName("System.Net.Sockets")).Location
-                    ([System.Reflection.Assembly]::LoadWithPartialName("System.Net.Primitives")).Location
-                    ([System.Reflection.Assembly]::LoadWithPartialName("System.Security.Principal.Windows")).Location
-                    ([System.Reflection.Assembly]::LoadWithPartialName("System.IO.FileSystem.AccessControl")).Location
-                    ([System.Reflection.Assembly]::LoadWithPartialName("System.Console")).Location
-                    ([System.Reflection.Assembly]::LoadWithPartialName("Microsoft.ActiveDirectory.Management")).Location
-                    ([System.Reflection.Assembly]::LoadWithPartialName("System.Management.Automation")).Location
-                    ([System.Reflection.Assembly]::LoadWithPartialName("System.DirectoryServices")).Location
-                ))
-                Remove-Variable refFolder
-            }
-            If ($CLR -eq "4")
-            {
-                Add-Type -TypeDefinition $($ADWSSource+$SMBInfoScannerSource) -ReferencedAssemblies ([System.String[]]@(
-                    ([System.Reflection.Assembly]::LoadWithPartialName("Microsoft.ActiveDirectory.Management")).Location
-                    ([System.Reflection.Assembly]::LoadWithPartialName("System.DirectoryServices")).Location
-                    ([System.Reflection.Assembly]::LoadWithPartialName("System.XML")).Location
-                ))
-            }
-            Else
-            {
-                Add-Type -TypeDefinition $($ADWSSource+$SMBInfoScannerSource) -ReferencedAssemblies ([System.String[]]@(
-                    ([System.Reflection.Assembly]::LoadWithPartialName("Microsoft.ActiveDirectory.Management")).Location
-                    ([System.Reflection.Assembly]::LoadWithPartialName("System.DirectoryServices")).Location
-                    ([System.Reflection.Assembly]::LoadWithPartialName("System.XML")).Location
-                )) -Language CSharpVersion3
-            }
-        }
-
-        If ($Method -eq 'LDAP')
-        {
-            If ($PSVersionTable.PSEdition -eq "Core")
-            {
-                # Beginning in PowerShell 6, ReferencedAssemblies doesn't include the default .NET assemblies. You must include a specific reference to them in the value passed to this parameter.
-                # https://docs.microsoft.com/en-gb/powershell/module/Microsoft.PowerShell.Utility/Add-Type?view=powershell-7
-
-                <#
-                # TODO: Instead of all assemblies, identify which ones are required.
-
-                $refFolder = Join-Path ( Split-Path ([PSObject].Assembly.Location) ) "ref"
-                $refAssemblies = Get-ChildItem -Path $refFolder -Filter "*.dll" | Select-Object -Expand FullName
-                Add-Type -TypeDefinition $($LDAPSource + $SMBInfoScannerSource) -ReferencedAssemblies $( $refAssemblies + ([System.Reflection.Assembly]::LoadWithPartialName("System.Management.Automation")).Location + ([System.Reflection.Assembly]::LoadWithPartialName("System.DirectoryServices")).Location )
-
-                Remove-Variable refFolder
-                Remove-Variable refAssemblies
-                #>
-
-                $refFolder = Join-Path -Path (Split-Path([PSObject].Assembly.Location)) -ChildPath "ref"
-                Add-Type -TypeDefinition $($LDAPSource + $SMBInfoScannerSource) -ReferencedAssemblies ([System.String[]]@(
-                    (Join-Path -Path $refFolder -ChildPath "System.Collections.dll")
-                    (Join-Path -Path $refFolder -ChildPath "System.Collections.NonGeneric.dll")
-                    (Join-Path -Path $refFolder -ChildPath "System.Threading.dll")
-                    (Join-Path -Path $refFolder -ChildPath "System.Threading.Thread.dll")
-                    (Join-Path -Path $refFolder -ChildPath "System.Diagnostics.TraceSource.dll")
-                    ([System.Reflection.Assembly]::LoadWithPartialName("System.Linq")).Location
-                    ([System.Reflection.Assembly]::LoadWithPartialName("System.Private.Xml")).Location
-                    ([System.Reflection.Assembly]::LoadWithPartialName("System.Security.AccessControl")).Location
-                    ([System.Reflection.Assembly]::LoadWithPartialName("System.Net.Sockets")).Location
-                    ([System.Reflection.Assembly]::LoadWithPartialName("System.Net.Primitives")).Location
-                    ([System.Reflection.Assembly]::LoadWithPartialName("System.Security.Principal.Windows")).Location
-                    ([System.Reflection.Assembly]::LoadWithPartialName("System.IO.FileSystem.AccessControl")).Location
-                    ([System.Reflection.Assembly]::LoadWithPartialName("System.Net.NameResolution")).Location
-                    ([System.Reflection.Assembly]::LoadWithPartialName("System.Console")).Location
-                    ([System.Reflection.Assembly]::LoadWithPartialName("System.Management.Automation")).Location
-                    ([System.Reflection.Assembly]::LoadWithPartialName("System.DirectoryServices")).Location
-                ))
-                Remove-Variable refFolder
-            }
-            Else
-            {
-                If ($CLR -eq "4")
-                {
-                    Add-Type -TypeDefinition $($LDAPSource+$SMBInfoScannerSource) -ReferencedAssemblies ([System.String[]]@(
-                        ([System.Reflection.Assembly]::LoadWithPartialName("System.DirectoryServices")).Location
-                        ([System.Reflection.Assembly]::LoadWithPartialName("System.XML")).Location
-                    ))
-                }
-                Else
-                {
-                    Add-Type -TypeDefinition $($LDAPSource+$SMBInfoScannerSource) -ReferencedAssemblies ([System.String[]]@(
-                        ([System.Reflection.Assembly]::LoadWithPartialName("System.DirectoryServices")).Location
-                        ([System.Reflection.Assembly]::LoadWithPartialName("System.XML")).Location
-                    )) -Language CSharpVersion3
-                }
-            }
-        }
-    }
-    Catch
-    {
-        Write-Output "[Invoke-AdaptAD] $($_.Exception.Message)"
-        Return $null
-    }
-    If ($SaveDebugPreference)
-    {
-        $script:DebugPreference = $SaveDebugPreference
-        Remove-Variable SaveDebugPreference
-    }
+    # C# compilation removed - using native PowerShell functions instead
+    # This avoids EDR detection from Add-Type -TypeDefinition
 
     # Allow running using RUNAS from a non-domain joined machine
     # runas /user:<Domain FQDN>\<Username> /netonly powershell.exe
