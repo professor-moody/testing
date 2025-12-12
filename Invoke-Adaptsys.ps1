@@ -57,7 +57,10 @@ param
 
     [Parameter(Mandatory = $false, HelpMessage = "Which Logo to use in the excel file? Default AdaptAD")]
     [ValidateSet('AdaptAD', 'CyberCX', 'Payatu')]
-    [string] $Logo = "AdaptAD"
+    [string] $Logo = "AdaptAD",
+
+    [Parameter(Mandatory = $false, HelpMessage = "Use LDAPS (LDAP over SSL, port 636) instead of LDAP (port 389). Requires valid SSL certificate on DC.")]
+    [switch] $UseSSL
 )
 
 
@@ -8380,12 +8383,26 @@ Function Invoke-AdaptAD
 
     If ($Method -eq 'LDAP')
     {
+        # Determine LDAP protocol (LDAP or LDAPS)
+        If ($UseSSL)
+        {
+            $LDAPProtocol = "LDAPS"
+            $LDAPPort = ":636"
+            Write-Output "[*] Using LDAPS (SSL) on port 636"
+        }
+        Else
+        {
+            $LDAPProtocol = "LDAP"
+            $LDAPPort = ""
+            Write-Output "[*] Using LDAP on port 389"
+        }
+
         If ($UseAltCreds)
         {
             Try
             {
-                $objDomain = New-Object System.DirectoryServices.DirectoryEntry "LDAP://$($DomainController)", $Credential.UserName,$Credential.GetNetworkCredential().Password
-                $objDomainRootDSE = New-Object System.DirectoryServices.DirectoryEntry "LDAP://$($DomainController)/RootDSE", $Credential.UserName,$Credential.GetNetworkCredential().Password
+                $objDomain = New-Object System.DirectoryServices.DirectoryEntry "$($LDAPProtocol)://$($DomainController)$($LDAPPort)", $Credential.UserName,$Credential.GetNetworkCredential().Password
+                $objDomainRootDSE = New-Object System.DirectoryServices.DirectoryEntry "$($LDAPProtocol)://$($DomainController)$($LDAPPort)/RootDSE", $Credential.UserName,$Credential.GetNetworkCredential().Password
             }
             Catch
             {
@@ -8412,8 +8429,17 @@ Function Invoke-AdaptAD
         }
         Else
         {
-            $objDomain = [ADSI]""
-            $objDomainRootDSE = ([ADSI] "LDAP://RootDSE")
+            If ($UseSSL)
+            {
+                # For LDAPS without explicit credentials, need to specify the protocol
+                $objDomain = New-Object System.DirectoryServices.DirectoryEntry "LDAPS://$($env:USERDNSDOMAIN):636"
+                $objDomainRootDSE = New-Object System.DirectoryServices.DirectoryEntry "LDAPS://$($env:USERDNSDOMAIN):636/RootDSE"
+            }
+            Else
+            {
+                $objDomain = [ADSI]""
+                $objDomainRootDSE = ([ADSI] "LDAP://RootDSE")
+            }
             If(!($objDomain.name))
             {
                 Write-Output "[Invoke-AdaptAD] LDAP bind Unsuccessful"
@@ -8424,7 +8450,7 @@ Function Invoke-AdaptAD
                 Return $null
             }
         }
-        Write-Debug "LDAP Bing Successful"
+        Write-Debug "LDAP Bind Successful"
         #return $null
     }
 
